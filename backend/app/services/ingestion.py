@@ -253,6 +253,7 @@ class KnowledgeIndexer:
             )
             revision.attempts += 1
             revision_id, document_id, user_id = revision.id, document.id, user.id
+            audience = (document.workspace_id, document.owner_id, document.project_id)
             inputs = [(chunk.id, chunk.body) for chunk in batch]
             session.commit()
         try:
@@ -271,6 +272,19 @@ class KnowledgeIndexer:
                 for vector in vectors
             ):
                 raise ProviderError("Embedding values do not match the configured profile.")
+            if self.settings.vector_backend == "qdrant":
+                from app.services.vector_index import QdrantIndex, audience_key
+
+                workspace_id, owner_id, project_id = audience
+                await QdrantIndex(self.settings).upsert_revision(
+                    document_id=document_id,
+                    revision_id=revision_id,
+                    audience=audience_key(workspace_id, owner_id),
+                    project_id=None if workspace_id else project_id,
+                    points=[
+                        (identifier, vector) for (identifier, _), vector in zip(inputs, vectors)
+                    ],
+                )
             error = None
         except (ProviderError, ServiceError) as exc:
             vectors, error = None, str(exc)[:400]

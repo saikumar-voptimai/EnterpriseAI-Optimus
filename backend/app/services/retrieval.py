@@ -34,7 +34,14 @@ class RetrievalService:
         }
 
     def search(
-        self, user, query, workspace_id=None, project_id=None, limit=12, query_embedding=None
+        self,
+        user,
+        query,
+        workspace_id=None,
+        project_id=None,
+        limit=12,
+        query_embedding=None,
+        vector_candidates=None,
     ):
         limit = max(1, min(int(limit), 40))
         statement = self.repository.chunks(user, workspace_id, project_id)
@@ -50,7 +57,19 @@ class RetrievalService:
         )
         lexical_rows = list(self.session.execute(lexical)) if query.strip() else []
         vector_rows = []
-        if query_embedding is not None:
+        if vector_candidates:
+            # Qdrant ranked these IDs; the audience/current-revision SQL decides
+            # which of them this caller may actually receive.
+            order = {str(identifier): rank for rank, identifier in enumerate(vector_candidates)}
+            candidate_statement = statement.where(
+                KnowledgeChunk.id.in_(list(order)),
+                DocumentRevision.embedding_model == self.settings.embedding_model,
+                DocumentRevision.embedding_dimensions == self.settings.embedding_dimensions,
+            )
+            vector_rows = sorted(
+                self.session.execute(candidate_statement), key=lambda row: order[str(row[0].id)]
+            )[: limit * 3]
+        elif query_embedding is not None:
             if not query_embedding or not all(
                 isinstance(value, (int, float)) and math.isfinite(value)
                 for value in query_embedding
@@ -188,10 +207,29 @@ class RetrievalService:
                     "mode": "lexical",
                     "reason": "Embedding provider unavailable; lexical retrieval used.",
                 }
+        candidates = None
+        if embedding is not None and self.settings.vector_backend == "qdrant":
+            from app.services.vector_index import QdrantIndex, audience_key
+
+            try:
+                candidates = await QdrantIndex(self.settings).search(
+                    embedding,
+                    audience=audience_key(workspace_id, user_id),
+                    project_id=None if workspace_id else project_id,
+                    limit=max(1, min(int(limit), 40)) * 3,
+                )
+            except ProviderError:
+                self.last_status = {
+                    "mode": "lexical",
+                    "reason": "Vector index unavailable; lexical retrieval used.",
+                }
+            embedding = None
         from app.models import User
 
         self.session.expire_all()
         user = self.session.get(User, user_id)
         if user is None:
             raise ServiceError("The user is no longer available.", 403)
-        return self.search(user, query, workspace_id, project_id, limit, embedding)
+        return self.search(
+            user, query, workspace_id, project_id, limit, embedding, vector_candidates=candidates
+        )

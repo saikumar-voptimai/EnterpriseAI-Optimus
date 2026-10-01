@@ -262,7 +262,7 @@ Generated from the Python source by `python3 scripts/generate_reference.py`. Use
 
 | Object | Public methods / role |
 | --- | --- |
-| `Settings` | `postgres_only()`, `origin_only()`, `allowed_models()` |
+| `Settings` | `postgres_only()`, `origin_only()`, `resolve_model_tiers()`, `allowed_models()`, `model_choices()` |
 | `get_settings()` | Module function |
 
 ## [backend/app/connectors/base.py](../backend/app/connectors/base.py)
@@ -303,6 +303,7 @@ Generated from the Python source by `python3 scripts/generate_reference.py`. Use
 | Object | Public methods / role |
 | --- | --- |
 | `backfill()` | Module function |
+| `qdrant_sync()` | Module function |
 | `main()` | Module function |
 
 ## [backend/app/main.py](../backend/app/main.py)
@@ -704,6 +705,13 @@ Generated from the Python source by `python3 scripts/generate_reference.py`. Use
 | --- | --- |
 | `next_occurrence()` | Module function |
 | `previous_occurrence()` | Module function |
+
+## [backend/app/services/vector_index.py](../backend/app/services/vector_index.py)
+
+| Object | Public methods / role |
+| --- | --- |
+| `audience_key()` | Module function |
+| `QdrantIndex` | `__init__()`, `ensure_collection()`, `upsert_revision()`, `search()`, `delete_document()` |
 
 ## [backend/app/services/workspace_briefs.py](../backend/app/services/workspace_briefs.py)
 

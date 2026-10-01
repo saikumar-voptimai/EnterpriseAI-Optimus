@@ -237,7 +237,7 @@ def bootstrap(actor: Actor = Depends(current_actor)):
         "workspaces": workspaces(actor),
         "scopes": scopes(actor),
         "projects": projects(actor),
-        "models": settings.allowed_models,
+        "models": settings.model_choices,
         "default_model": settings.openrouter_default_model,
         "reviewable_scope_ids": [scope.id for scope in access(actor).reviewable_scopes(actor.user)],
         "external_ai_enabled": settings.allow_external_ai and bool(settings.openrouter_api_key),
@@ -589,7 +589,12 @@ def delete_document(rid: s.Id, actor: Actor = Depends(current_actor)):
     doc = access(actor).document(actor.user, rid, roles=["member", "manager"])
     actor.db.delete(doc)
     audit(actor, "document_deleted", "document", rid)
-    return commit(actor)
+    result = commit(actor)
+    if get_settings().vector_backend == "qdrant":
+        from .services.vector_index import QdrantIndex
+
+        QdrantIndex().delete_document(rid)
+    return result
 
 
 @app.get("/api/conversations")

@@ -93,6 +93,8 @@ flowchart TD
     Hybrid --> Agent["Context and citations"]
 ```
 
+Vectors always live in PostgreSQL. With `VECTOR_BACKEND=qdrant`, `KnowledgeIndexer` also upserts each batch into a Qdrant collection (one per embedding dimension, payload: audience, document, revision, project, model) and removes the document's older revisions; `search_hybrid()` asks Qdrant for candidate chunk IDs inside the caller's audience and `search()` keeps only those that pass the SQL audience/current-revision filter. Qdrant is therefore a rebuildable index (`python -m app.knowledge_cli qdrant-sync`), never an authority. With the default `pgvector` backend, ranking happens in PostgreSQL as below.
+
 Use one vector store, with scope/audience filtering. The current HNSW profile targets the configured supported dimension; changing embedding dimensions is an indexing/schema decision, not a switch that can reinterpret existing vectors. Use `python -m app.knowledge_cli backfill` to index retained 1.0 document text without reuploading. Their original files remain unavailable until a new original is uploaded.
 
 ## Personal assistant flow

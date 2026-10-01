@@ -1,8 +1,9 @@
 """Alembic environment. DATABASE_URL is the same setting used by the API/worker."""
+
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import create_engine, pool
+from sqlalchemy import create_engine, pool, text
 
 from app.config import get_settings
 from app.models import Base
@@ -32,6 +33,10 @@ def run_migrations_online() -> None:
         connect_args={"options": "-c timezone=UTC"},
     )
     with connectable.connect() as connection:
+        # Revision 0002 stores pgvector columns. Managed PostgreSQL (Neon) and the
+        # pgvector image ship the extension but do not enable it in a new database.
+        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        connection.commit()
         context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
         with context.begin_transaction():
             context.run_migrations()

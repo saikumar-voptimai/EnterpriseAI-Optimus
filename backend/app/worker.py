@@ -665,7 +665,11 @@ async def serve(role="all"):
     stopping = asyncio.Event()
     loop = asyncio.get_running_loop()
     for signum in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(signum, stopping.set)
+        try:
+            loop.add_signal_handler(signum, stopping.set)
+        except NotImplementedError:
+            # Windows event loops have no signal handlers; finish lanes on Ctrl+C.
+            signal.signal(signum, lambda *_: loop.call_soon_threadsafe(stopping.set))
 
     async def lane(name):
         from app.agents.runtime import AgentRunner

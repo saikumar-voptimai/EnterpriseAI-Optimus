@@ -1,11 +1,17 @@
-"""Upgrade v1 extracted documents: python -m app.knowledge_cli backfill."""
+"""Knowledge maintenance.
+
+python -m app.knowledge_cli backfill      Upgrade v1 extracted documents.
+python -m app.knowledge_cli qdrant-sync   Rebuild the Qdrant index from PostgreSQL vectors.
+"""
 
 import argparse
+import asyncio
 import json
 from sqlalchemy import func, select
+from app.config import get_settings
 from app.db import SessionLocal
 from app.models import Document, Membership, User, Workspace
-from app.models_knowledge import DocumentRevision
+from app.models_knowledge import DocumentRevision, KnowledgeChunk
 from app.services.ingestion import IngestionService
 
 
@@ -72,15 +78,70 @@ def backfill(limit=0, dry_run=False):
     return counts
 
 
+def qdrant_sync(limit=0, dry_run=False):
+    """Copy current-revision vectors for the configured profile into Qdrant."""
+    from app.services.vector_index import QdrantIndex, audience_key
+
+    settings = get_settings()
+    revisions = (
+        select(
+            DocumentRevision.id,
+            Document.id,
+            Document.workspace_id,
+            Document.owner_id,
+            Document.project_id,
+        )
+        .join(Document, Document.id == DocumentRevision.document_id)
+        .where(
+            DocumentRevision.is_current.is_(True),
+            DocumentRevision.embedding_model == settings.embedding_model,
+            DocumentRevision.embedding_dimensions == settings.embedding_dimensions,
+        )
+        .order_by(DocumentRevision.id)
+    )
+    if limit:
+        revisions = revisions.limit(limit)
+    with SessionLocal() as session:
+        rows = list(session.execute(revisions))
+    if dry_run:
+        return {"eligible_revisions": len(rows), "dry_run": True}
+    index, counts = QdrantIndex(settings), {"revisions": 0, "points": 0}
+    for revision_id, document_id, workspace_id, owner_id, project_id in rows:
+        with SessionLocal() as session:
+            points = [
+                (chunk_id, [float(value) for value in embedding])
+                for chunk_id, embedding in session.execute(
+                    select(KnowledgeChunk.id, KnowledgeChunk.embedding).where(
+                        KnowledgeChunk.revision_id == revision_id,
+                        KnowledgeChunk.embedding.is_not(None),
+                    )
+                )
+            ]
+        for start in range(0, len(points), 64):
+            asyncio.run(
+                index.upsert_revision(
+                    document_id=document_id,
+                    revision_id=revision_id,
+                    audience=audience_key(workspace_id, owner_id),
+                    project_id=None if workspace_id else project_id,
+                    points=points[start : start + 64],
+                )
+            )
+        counts["revisions"] += 1
+        counts["points"] += len(points)
+    return counts
+
+
 def main():
     parser = argparse.ArgumentParser(description="Knowledge maintenance")
-    parser.add_argument("command", choices=["backfill"])
+    parser.add_argument("command", choices=["backfill", "qdrant-sync"])
     parser.add_argument("--limit", type=int, default=0, help="Maximum documents, 0 means all")
     parser.add_argument("--dry-run", action="store_true")
     arguments = parser.parse_args()
     if arguments.limit < 0:
         parser.error("--limit cannot be negative")
-    result = backfill(arguments.limit, arguments.dry_run)
+    command = qdrant_sync if arguments.command == "qdrant-sync" else backfill
+    result = command(arguments.limit, arguments.dry_run)
     print(json.dumps(result))
     if result.get("failed"):
         raise SystemExit(1)

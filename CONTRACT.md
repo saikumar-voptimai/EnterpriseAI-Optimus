@@ -31,7 +31,7 @@ Scheduled analytical jobs reuse the same graph under their job lease. Their retr
 
 ## Retrieval
 
-Documents use revisioned originals, extraction, token chunks and explicit embedding profile/state. Lexical retrieval remains available while approved semantic indexing is pending. SQL audience filters and service access checks restrict candidates/results; similarity never overrides authorization. pgvector is shared across workspaces. Qdrant and graph databases are not required by this release.
+Documents use revisioned originals, extraction, token chunks and explicit embedding profile/state. Lexical retrieval remains available while approved semantic indexing is pending. SQL audience filters and service access checks restrict candidates/results; similarity never overrides authorization. Vectors are stored in PostgreSQL. `VECTOR_BACKEND=pgvector` (default) ranks them with pgvector; `VECTOR_BACKEND=qdrant` ranks them in a Qdrant collection whose candidates are re-authorized through the same SQL audience filter before use, so Qdrant can be rebuilt from PostgreSQL (`knowledge_cli qdrant-sync`) and never widens access. Graph databases are not required.
 
 ## Personal assistant
 

@@ -14,6 +14,11 @@ from sqlalchemy.pool import NullPool
 TEST_URL = os.environ.get("TEST_DATABASE_URL")
 if TEST_URL:
     os.environ["DATABASE_URL"] = TEST_URL
+
+from app.config import Settings
+
+# A developer's .env (Neon URL, real keys, larger limits) must never shape tests.
+Settings.model_config["env_file"] = None
 # Fixed test settings prevent a developer's real provider credentials being used.
 os.environ.update(
     {
@@ -23,6 +28,11 @@ os.environ.update(
         "OPENROUTER_API_KEY": "test-key-never-sent",
         "OPENROUTER_MODELS": "test/model-a,test/model-b",
         "OPENROUTER_DEFAULT_MODEL": "test/model-a",
+        "OPENROUTER_MODEL_FAST": "",
+        "OPENROUTER_MODEL_STANDARD": "",
+        "OPENROUTER_MODEL_DEEP": "",
+        "OPENROUTER_SYSTEM1_MODEL": "",
+        "VECTOR_BACKEND": "pgvector",
     }
 )
 
