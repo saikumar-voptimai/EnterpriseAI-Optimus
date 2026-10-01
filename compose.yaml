@@ -1,0 +1,100 @@
+name: ${COMPOSE_PROJECT_NAME:-voptimai}
+
+x-app: &app
+  image: voptimai:${APP_VERSION:-local}
+  build:
+    context: .
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:?Run scripts/start.sh}:${POSTGRES_PASSWORD:?Run scripts/start.sh}@db:5432/${POSTGRES_DB:?Run scripts/start.sh}
+    DATA_DIR: /app/data
+    KNOWLEDGE_STORAGE_DIR: /app/data/documents
+  volumes:
+    - application_data:/app/data
+  init: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp:size=128m,mode=1777
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-worker: &worker
+  <<: *app
+  restart: unless-stopped
+  stop_grace_period: 120s
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+
+services:
+  db:
+    # Official pgvector build publishes linux/amd64 and linux/arm64.
+    image: pgvector/pgvector:0.8.6-pg16-bookworm
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Run scripts/start.sh}
+      POSTGRES_USER: ${POSTGRES_USER:?Run scripts/start.sh}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run scripts/start.sh}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  migrate:
+    <<: *app
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health/ready', timeout=4).read()"]
+      interval: 15s
+      timeout: 5s
+      start_period: 30s
+      retries: 8
+
+  scheduler:
+    <<: *worker
+    command: ["python", "-m", "app.worker", "--role", "scheduler"]
+
+  executor:
+    <<: *worker
+    command: ["python", "-m", "app.worker", "--role", "executor"]
+
+  connectors:
+    <<: *worker
+    command: ["python", "-m", "app.worker", "--role", "connectors"]
+
+  meetings:
+    <<: *worker
+    command: ["python", "-m", "app.worker", "--role", "meetings"]
+
+volumes:
+  postgres_data:
+  application_data:

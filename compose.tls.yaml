@@ -1,0 +1,26 @@
+# Select using COMPOSE_FILE=compose.yaml:compose.tls.yaml in .env (Linux).
+services:
+  caddy:
+    image: caddy:2-alpine
+    environment:
+      APP_HOSTNAME: ${APP_HOSTNAME:?Set APP_HOSTNAME to the trusted LAN DNS name}
+    ports:
+      - "${TLS_BIND_ADDRESS:-0.0.0.0}:80:80"
+      - "${TLS_BIND_ADDRESS:-0.0.0.0}:443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  caddy_data:
+  caddy_config:

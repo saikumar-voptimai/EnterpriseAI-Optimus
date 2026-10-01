@@ -1,0 +1,93 @@
+name: Verify application
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  application:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install Python dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
+      - name: Start isolated PostgreSQL
+        shell: bash
+        run: |
+          task_password="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+          echo "::add-mask::$task_password"
+          task_url="postgresql+psycopg://voptimai:$task_password@127.0.0.1:5432/voptimai_test"
+          echo "::add-mask::$task_url"
+          echo "DATABASE_URL=$task_url" >> "$GITHUB_ENV"
+          echo "TEST_DATABASE_URL=$task_url" >> "$GITHUB_ENV"
+          docker run --detach --name voptimai-ci-db \
+            --publish 127.0.0.1:5432:5432 \
+            --env POSTGRES_USER=voptimai \
+            --env POSTGRES_DB=voptimai_test \
+            --env "POSTGRES_PASSWORD=$task_password" \
+            --health-cmd 'pg_isready -U voptimai -d voptimai_test' \
+            --health-interval 2s --health-timeout 2s --health-retries 30 \
+            pgvector/pgvector:0.8.6-pg16-bookworm
+          for task_attempt in $(seq 1 40); do
+            if [ "$(docker inspect --format '{{.State.Health.Status}}' voptimai-ci-db)" = healthy ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs voptimai-ci-db
+          exit 1
+      - name: Verify required extension
+        run: docker exec voptimai-ci-db psql -U voptimai -d voptimai_test -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS vector"
+      - name: Apply migrations
+        working-directory: backend
+        run: alembic upgrade head
+      - name: Backend tests
+        env:
+          PYTHONPATH: backend
+          ALLOW_EXTERNAL_AI: "false"
+          SESSION_COOKIE_SECURE: "false"
+          APP_ORIGIN: http://testserver
+        run: python -m pytest -q backend/tests
+      - name: Frontend validation
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run check
+          npm run build
+      - name: Deployment script tests
+        run: python -m unittest discover -s scripts/tests -v
+      - name: Shell syntax
+        run: for task_script in scripts/*.sh; do bash -n "$task_script"; done
+      - name: Stop test database
+        if: always()
+        run: docker rm --force voptimai-ci-db || true
+
+  container-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

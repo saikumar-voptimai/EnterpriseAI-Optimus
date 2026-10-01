@@ -1,0 +1,14 @@
+........................................................................ [ 48%]
+........................................................................ [ 97%]
+....                                                                     [100%]
+148 passed in 16.72s
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running downgrade 0004_explicit_job_triggers -> 0003_meeting_extractions, Distinguish intentional Run Now graphs from recurring schedule joins.
+INFO  [alembic.runtime.migration] Running downgrade 0003_meeting_extractions -> 0002_agent_platform, Durable bounded meeting extraction jobs; immutable schema snapshot.
+INFO  [alembic.runtime.migration] Running downgrade 0002_agent_platform -> 0001_initial, Durable agents, hybrid knowledge, personal assistant and enterprise governance.
+INFO  [alembic.runtime.migration] Context impl PostgresqlImpl.
+INFO  [alembic.runtime.migration] Will assume transactional DDL.
+INFO  [alembic.runtime.migration] Running upgrade 0001_initial -> 0002_agent_platform, Durable agents, hybrid knowledge, personal assistant and enterprise governance.
+INFO  [alembic.runtime.migration] Running upgrade 0002_agent_platform -> 0003_meeting_extractions, Durable bounded meeting extraction jobs; immutable schema snapshot.
+INFO  [alembic.runtime.migration] Running upgrade 0003_meeting_extractions -> 0004_explicit_job_triggers, Distinguish intentional Run Now graphs from recurring schedule joins.
