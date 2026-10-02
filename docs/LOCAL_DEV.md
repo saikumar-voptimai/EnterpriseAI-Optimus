@@ -130,7 +130,16 @@ Fill an empty collection from PostgreSQL with
 ## Tests
 
 Tests **truncate every table**. Never point them at the database you demo from.
-Use a disposable database, such as a separate Neon branch or a local container:
+Use a disposable database. With a Neon test database kept in `.env` as
+`DATABASE_URL_NEON`:
+
+```bash
+export PYTHONUTF8=1 PYTHONPATH=backend
+export TEST_DATABASE_URL="$(sed -n 's/^DATABASE_URL_NEON=//p' .env)"
+.venv/Scripts/python -m pytest -q backend/tests
+```
+
+Or with a local container:
 
 ```bash
 docker run -d --name optimus-test-db -e POSTGRES_USER=optimus -e POSTGRES_PASSWORD=optimus-test \

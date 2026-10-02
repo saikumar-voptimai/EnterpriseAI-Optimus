@@ -36,7 +36,17 @@ def run_migrations_online() -> None:
     with connectable.connect() as connection:
         # Revision 0002 stores pgvector columns. Managed PostgreSQL (Neon, Supabase) and
         # the pgvector image ship the extension but do not enable it in a new database.
-        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        # Supabase keeps extensions in its `extensions` schema (on the search_path)
+        # rather than in the API-exposed public schema.
+        extensions_schema = connection.execute(
+            text("SELECT 1 FROM pg_namespace WHERE nspname = 'extensions'")
+        ).scalar()
+        connection.execute(
+            text(
+                "CREATE EXTENSION IF NOT EXISTS vector"
+                + (" WITH SCHEMA extensions" if extensions_schema else "")
+            )
+        )
         connection.commit()
         context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
         with context.begin_transaction():
