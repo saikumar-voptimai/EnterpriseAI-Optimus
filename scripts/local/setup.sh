@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # One-time local setup for Optimus: Python 3.12 environment, frontend build,
-# .env with generated secrets, and a local Qdrant binary.
+# .env with generated secrets, and (only when used) a local Qdrant binary.
 #
-#   ./scripts/local/setup.sh [--skip-frontend] [--skip-qdrant]
+#   ./scripts/local/setup.sh [--skip-frontend] [--with-qdrant]
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 SKIP_FRONTEND=0
-SKIP_QDRANT=0
+WITH_QDRANT=0
 for arg in "$@"; do
   case "$arg" in
     --skip-frontend) SKIP_FRONTEND=1 ;;
-    --skip-qdrant) SKIP_QDRANT=1 ;;
+    --with-qdrant) WITH_QDRANT=1 ;;
     -h | --help)
       sed -n '2,6p' "$0"
       exit 0
@@ -52,7 +52,7 @@ else
   echo "Back up CREDENTIAL_ENCRYPTION_KEY: saved connection passwords cannot be decrypted without it."
 fi
 
-if [ "$SKIP_QDRANT" = 0 ]; then
+if [ "$WITH_QDRANT" = 1 ] || [ "$(env_value VECTOR_BACKEND)" = qdrant ]; then
   echo "== Qdrant $QDRANT_VERSION"
   if [ -x "$QDRANT_BIN" ]; then
     echo "Qdrant binary already present."

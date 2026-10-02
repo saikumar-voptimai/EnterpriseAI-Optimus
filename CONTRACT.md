@@ -12,7 +12,7 @@ One enterprise, one PostgreSQL 16 database with pgvector, Svelte assets served b
 
 PostgreSQL is authoritative for identities, scope hierarchy, workspace roles, preferences, knowledge revisions, chat, jobs, runs, checkpoints, connector state, meetings and deliveries. There is no JSON-file production scheduler or process-memory-only reminder store. Domain records remain authoritative over LangGraph checkpoints. Original document bytes are retained for new revisions in the database; earlier text-only documents cannot recover missing originals.
 
-Migrations are additive revisions after `0001_initial`; do not edit that initial migration for new releases. `docs/schema.sql` is a compiled reference, not the installation mechanism. Backups preserve database plus the application file volume. The separately protected encryption key is required to recover encrypted credentials.
+On databases that define Supabase's `anon`/`authenticated` Data API roles, every migration run revokes their access to application tables and sequences and enables row-level security (no policies) on each table; the owning application role is unaffected. Migrations are additive revisions after `0001_initial`; do not edit that initial migration for new releases. `docs/schema.sql` is a compiled reference, not the installation mechanism. Backups preserve database plus the application file volume. The separately protected encryption key is required to recover encrypted credentials.
 
 ## Identity and authorization
 

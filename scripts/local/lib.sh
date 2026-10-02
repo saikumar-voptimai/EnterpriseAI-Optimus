@@ -30,8 +30,13 @@ die() {
   exit 1
 }
 
-# Print the value of KEY from .env without executing the file as shell code.
+# Print KEY from the environment, else from .env (read as data, never executed).
+# Same precedence as the application's settings.
 env_value() {
+  if [ -n "${!1-}" ]; then
+    printf '%s\n' "${!1}"
+    return 0
+  fi
   [ -f "$ENV_FILE" ] || return 0
   sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" "$ENV_FILE" | tail -n 1 | tr -d '\r' |
     sed 's/[[:space:]]*$//'

@@ -183,10 +183,12 @@ class OpenRouterGateway:
         if tools:
             if len(tools) > 20 or tool_choice not in {"auto", "none", "required"}:
                 raise ServiceError("Invalid tool configuration.")
+            # No OpenRouter provider declares `parallel_tool_calls`; requiring it
+            # rejects every route (HTTP 404). The graph runs each returned call in
+            # order and enforces AGENT_MAX_TOOL_CALLS itself.
             payload.update(
                 tools=tools,
                 tool_choice=tool_choice,
-                parallel_tool_calls=False,
                 provider={"require_parameters": True},
             )
         if response_format:

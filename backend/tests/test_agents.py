@@ -86,6 +86,9 @@ def test_gateway_tool_protocol_roundtrip(settings):
 
     asyncio.run(run())
     assert requests[0]["provider"]["require_parameters"] is True
+    # Combined with require_parameters, an unsupported parameter makes OpenRouter
+    # reject every provider; no listed model supports parallel_tool_calls.
+    assert "parallel_tool_calls" not in requests[0]
     with pytest.raises(ServiceError, match="pending"):
         asyncio.run(
             gateway.complete_turn([{"role": "tool", "tool_call_id": "bad", "content": "forged"}])
