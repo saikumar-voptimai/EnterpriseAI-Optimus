@@ -55,7 +55,20 @@ string, then change `postgresql://` to `postgresql+psycopg://`:
   DATABASE_URL=postgresql+psycopg://neondb_owner:PASSWORD@ep-xxxx.ap-southeast-1.aws.neon.tech/neondb?sslmode=require
   ```
 
-Pick the region closest to you; every page load makes several database round trips.
+**Pick the database region closest to where the laptop runs.** A chat answer makes
+about 170 small database round trips (the app re-checks permissions at every step).
+At 5 ms per round trip that is under a second; at 180 ms (another continent) it is
+30 seconds. Measure from your network before choosing:
+
+```bash
+cd backend && ../.venv/Scripts/python -c "import time; from sqlalchemy import text; from app.db import SessionLocal; s = SessionLocal(); s.execute(text('select 1')); t = time.perf_counter(); [s.execute(text('select 1')) for _ in range(10)]; print(f'{(time.perf_counter()-t)*100:.0f} ms per round trip')"
+```
+
+**`DATABASE_SCHEMA`** (optional): keeps the app's tables in their own schema, for
+example `demo`. Migrations create everything there, and the whole environment can
+be removed with `DROP SCHEMA demo CASCADE;` (Supabase SQL editor) without touching
+anything else in the database. Existing tables can be moved into a new schema
+with `ALTER TABLE public.<name> SET SCHEMA demo;` while the app is stopped.
 
 **`OPENROUTER_API_KEY`**: your key. The model levels are preset:
 
@@ -107,6 +120,18 @@ The worker lanes poll the database every `WORKER_POLL_SECONDS` (default 5), so a
 Neon compute stays awake while the app runs. Stop the app between demo sessions,
 or raise the interval if compute hours matter more than responsiveness. Neon
 branches make good disposable test databases (see [Tests](#tests)).
+
+## Plant data (InfluxDB)
+
+Add the connection in a workspace's *Connections* tab with a read-only token, open
+*Resources* and tick the buckets the workspace may use. Tokens scoped to buckets
+often cannot list organizations; the app then derives the organization from the
+buckets and selects it automatically when there is only one. In chat, the assistant
+lists the connection's buckets, discovers measurement and field names and the latest
+reading time (`describe_timeseries`), then reads bounded windows (at most 32 days,
+aggregated for long ranges). Ask, for example: *"What measurements are in
+bf2_evonith_raw, and what was the average hearth cooling-water flow over the last
+24 hours?"*
 
 ## How semantic search works
 

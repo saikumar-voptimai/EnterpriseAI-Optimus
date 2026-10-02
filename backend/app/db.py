@@ -11,7 +11,7 @@ engine = create_engine(
     get_settings().database_url,
     pool_pre_ping=True,
     pool_recycle=1800,
-    connect_args={"options": "-c timezone=UTC"},
+    connect_args={"options": get_settings().connect_options},
 )
 SessionLocal = sessionmaker(bind=engine, class_=Session, expire_on_commit=False, autoflush=False)
 

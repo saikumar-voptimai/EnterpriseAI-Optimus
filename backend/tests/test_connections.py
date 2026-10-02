@@ -338,3 +338,79 @@ def test_delivery_rechecks_source_permission_before_dispatch(db, monkeypatch):
     monkeypatch.setattr(service, "_send_email", lambda row: calls.append(row.id))
     asyncio.run(service.tick())
     assert message.status == "failed" and calls == []
+
+
+def influx_with(responder, org_id="org", bucket_ids=("b",)):
+    return InfluxAdapter(
+        {
+            "url": "http://127.0.0.1:8086",
+            "allow_private_network": True,
+            "org_id": org_id,
+            "bucket_ids": list(bucket_ids),
+        },
+        {"token": "readonly"},
+        ConnectorHTTP(httpx.MockTransport(responder)),
+    )
+
+
+@pytest.mark.parametrize("org_status", [200, 401])
+def test_influx_bucket_scoped_token_still_offers_its_organization(org_status):
+    def responder(request):
+        if request.url.path == "/api/v2/orgs":
+            return httpx.Response(org_status, json={"orgs": []})
+        return httpx.Response(
+            200, json={"buckets": [{"id": "b1", "name": "bf2_raw", "orgID": "o1"}]}
+        )
+
+    resources = asyncio.run(influx_with(responder, org_id="").resources())
+    assert resources["organizations"] == [{"id": "o1", "name": "Organization o1"}]
+    assert resources["buckets"] == [{"id": "b1", "name": "bf2_raw", "org_id": "o1"}]
+
+
+def test_influx_describe_lists_measurements_then_fields_tags_and_recency():
+    queries = []
+
+    def responder(request):
+        if request.url.path == "/api/v2/buckets":
+            return httpx.Response(
+                200,
+                json={
+                    "buckets": [
+                        {"id": "b", "name": "bf2_raw", "orgID": "org"},
+                        {"id": "x", "name": "other", "orgID": "org"},
+                    ]
+                },
+            )
+        flux = json.loads(request.content)["query"]
+        queries.append(flux)
+        if "schema.measurements(" in flux:
+            return httpx.Response(
+                200, content=",result,table,_value\n,,0,cooling_water\n,,0,delta_t\n"
+            )
+        if "measurementFieldKeys" in flux:
+            return httpx.Response(200, content=",result,table,_value\n,,0,cw_hearth_flow_m3h\n")
+        if "measurementTagKeys" in flux:
+            return httpx.Response(
+                200, content=",result,table,_value\n,,0,_field\n,,0,_measurement\n,,0,line\n"
+            )
+        return httpx.Response(200, content=",result,table,_time\n,,0,2026-10-02T20:27:54Z\n")
+
+    adapter = influx_with(responder)
+    listing = asyncio.run(adapter.describe(bucket_id="b"))
+    assert listing["bucket"] == "bf2_raw" and listing["measurements"] == [
+        "cooling_water",
+        "delta_t",
+    ]
+    detail = asyncio.run(
+        adapter.describe(bucket_id="b", measurement="cooling_water", lookback_days=30)
+    )
+    assert detail["fields"] == ["cw_hearth_flow_m3h"] and detail["tag_keys"] == ["line"]
+    assert detail["latest_reading_at"] == "2026-10-02T20:27:54Z"
+    assert 'schema.measurements(bucket: "bf2_raw", start: -365d)' in queries[0]
+    assert all("start: -30d" in q for q in queries[1:])
+    with pytest.raises(ServiceError, match="not enabled"):
+        asyncio.run(adapter.describe(bucket_id="x"))
+    with pytest.raises(ServiceError, match="Invalid measurement"):
+        asyncio.run(adapter.describe(bucket_id="b", measurement='${die(msg:"bad")}'))
+    with pytest.raises(ServiceError, match="organization"):
+        asyncio.run(influx_with(responder, org_id="").describe(bucket_id="b"))

@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     # Compose passes the same values as process environment, which wins over both.
     model_config = SettingsConfigDict(env_file=(REPO_ROOT / ".env", ".env"), extra="ignore")
     database_url: str = "postgresql+psycopg://voptimai@localhost:5432/voptimai"
+    # PostgreSQL schema holding the application tables. A non-public schema (for
+    # example "demo") keeps an environment separable: DROP SCHEMA demo CASCADE.
+    database_schema: str = Field(default="public", pattern=r"^[a-z_][a-z0-9_]{0,62}$")
     openrouter_api_key: str = ""
     openrouter_models: str = "openai/gpt-4.1-mini"
     openrouter_default_model: str = "openai/gpt-4.1-mini"
@@ -31,6 +34,9 @@ class Settings(BaseSettings):
     max_output_tokens: int = Field(default=2048, ge=128, le=16000)
     openrouter_timeout_seconds: int = Field(default=90, ge=10, le=120)
     worker_poll_seconds: int = Field(default=5, ge=1, le=60)
+    # Chat runs wait in a queue; the executor lane checks it more often than
+    # scheduled work so an answer starts within this interval.
+    agent_poll_seconds: float = Field(default=0.5, ge=0.1, le=60)
     job_lease_seconds: int = Field(default=180, ge=150, le=3600)
     openrouter_system1_model: str = ""
     bootstrap_token: str = ""
@@ -106,6 +112,15 @@ class Settings(BaseSettings):
         if not self.openrouter_system1_model:
             self.openrouter_system1_model = tiers["fast"] or self.openrouter_default_model
         return self
+
+    @property
+    def connect_options(self) -> str:
+        """libpq startup options: UTC sessions, and the application schema first."""
+        options = "-c timezone=UTC"
+        if self.database_schema != "public":
+            # extensions: Supabase's pgvector schema; public: pgvector elsewhere.
+            options += f" -c search_path={self.database_schema},extensions,public"
+        return options
 
     @property
     def allowed_models(self):

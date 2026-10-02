@@ -9,7 +9,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationErro
 from sqlalchemy import select, or_
 from app.models import User, Incident, Report, Workspace
 from app.repositories import AccessRepository
-from app.services.errors import ServiceError
+from app.services.errors import ProviderError, ServiceError
 
 
 class Arguments(BaseModel):
@@ -55,6 +55,13 @@ class CalendarArgs(Arguments):
 
 class ConnectionsArgs(Arguments):
     pass
+
+
+class DescribeArgs(Arguments):
+    connection_id: str = Field(min_length=1, max_length=100)
+    bucket_id: str = Field(min_length=1, max_length=200)
+    measurement: str | None = Field(default=None, min_length=1, max_length=200)
+    lookback_days: int = Field(default=365, ge=1, le=3650)
 
 
 class SeriesArgs(Arguments):
@@ -104,11 +111,15 @@ class ToolRegistry:
             CalendarArgs,
         ),
         "list_data_connections": (
-            "List authorized read-only InfluxDB connection IDs and enabled bucket IDs.",
+            "List authorized read-only InfluxDB connections with their enabled buckets (ID and name).",
             ConnectionsArgs,
         ),
+        "describe_timeseries": (
+            "Discover what an enabled InfluxDB bucket contains: without a measurement, its measurement names; with one, its field names, tag keys and latest reading time. Use it to find exact names and a window that has data before read_timeseries; never guess names.",
+            DescribeArgs,
+        ),
         "read_timeseries": (
-            "Read a bounded measured series from an enabled InfluxDB bucket. Supply exact measurement, field and tags; never invent data.",
+            "Read a bounded measured series (at most 32 days) from an enabled InfluxDB bucket. Supply exact measurement, field and tags from describe_timeseries; never invent data.",
             SeriesArgs,
         ),
         "calculate_statistics": (
@@ -229,7 +240,7 @@ class ToolRegistry:
                         }
                     )
                 return ToolResult(data, sources)
-            if name in {"list_data_connections", "read_timeseries"}:
+            if name in {"list_data_connections", "describe_timeseries", "read_timeseries"}:
                 from app.services.connections import ConnectionService
 
                 service = ConnectionService(session, self.settings)
@@ -247,15 +258,24 @@ class ToolRegistry:
                         for c in service.repo.list(user, self.workspace_id)
                         if c.provider == "influxdb" and c.status == "connected" and permitted(c)
                     ]
-                    return ToolResult(
-                        [
+                    listed = []
+                    for c in connections:
+                        try:
+                            names = await service.bucket_names(user, c.id)
+                        except (ProviderError, ServiceError):
+                            names = {}
+                        listed.append(
                             {
                                 "id": c.id,
                                 "name": c.name,
-                                "bucket_ids": c.config.get("bucket_ids", []),
+                                "buckets": [
+                                    {"id": b, "name": names.get(b)}
+                                    for b in c.config.get("bucket_ids", [])
+                                ],
                             }
-                            for c in connections
-                        ],
+                        )
+                    return ToolResult(
+                        listed,
                         [
                             {
                                 "type": "connection",
@@ -278,6 +298,15 @@ class ToolRegistry:
                     "version": connection.updated_at.isoformat(),
                     "read_only": True,
                 }
+                if name == "describe_timeseries":
+                    description = await service.describe_series(
+                        user,
+                        params.connection_id,
+                        bucket_id=params.bucket_id,
+                        measurement=params.measurement,
+                        lookback_days=params.lookback_days,
+                    )
+                    return ToolResult(description, [reference])
                 rows = await service.query_series(
                     user,
                     params.connection_id,

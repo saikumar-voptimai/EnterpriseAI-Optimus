@@ -1,6 +1,6 @@
 """Post-migration hardening for managed PostgreSQL that exposes a data API.
 
-Supabase publishes the `public` schema through its Data API (PostgREST and
+Supabase publishes schemas (by default `public`) through its Data API (PostgREST and
 GraphQL) to the `anon` and `authenticated` roles. The anon key is designed to be
 public, and new tables there are granted to those roles by default. Optimus never
 uses that API: it connects as the owner of its tables. When those roles exist,
@@ -15,7 +15,8 @@ from sqlalchemy import text
 API_ROLES = ("anon", "authenticated")
 
 
-def lock_down_public_schema(connection) -> dict:
+def lock_down_schema(connection, schema: str = "public") -> dict:
+    """Revoke Data API roles from the application schema and enable RLS on its tables."""
     roles = [
         role
         for role in API_ROLES
@@ -26,23 +27,29 @@ def lock_down_public_schema(connection) -> dict:
     if not roles:
         return {"api_roles": [], "tables": 0}
     grantees = ", ".join(roles)
-    for statement in (
-        f"REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {grantees}",
-        f"REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM {grantees}",
-        f"ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM {grantees}",
-        f"ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM {grantees}",
-    ):
+    target = f'"{schema}"'
+    statements = [
+        f"REVOKE ALL ON ALL TABLES IN SCHEMA {target} FROM {grantees}",
+        f"REVOKE ALL ON ALL SEQUENCES IN SCHEMA {target} FROM {grantees}",
+        f"ALTER DEFAULT PRIVILEGES IN SCHEMA {target} REVOKE ALL ON TABLES FROM {grantees}",
+        f"ALTER DEFAULT PRIVILEGES IN SCHEMA {target} REVOKE ALL ON SEQUENCES FROM {grantees}",
+    ]
+    if schema != "public":
+        # Supabase's own services expect public to stay usable; others need not be.
+        statements.append(f"REVOKE ALL ON SCHEMA {target} FROM {grantees}")
+    for statement in statements:
         connection.execute(text(statement))
     tables = (
         connection.execute(
             text(
                 "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-                "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT c.relrowsecurity"
-            )
+                "WHERE n.nspname = :schema AND c.relkind IN ('r', 'p') AND NOT c.relrowsecurity"
+            ),
+            {"schema": schema},
         )
         .scalars()
         .all()
     )
     for table in tables:
-        connection.execute(text(f'ALTER TABLE public."{table}" ENABLE ROW LEVEL SECURITY'))
+        connection.execute(text(f'ALTER TABLE {target}."{table}" ENABLE ROW LEVEL SECURITY'))
     return {"api_roles": roles, "tables": len(tables)}

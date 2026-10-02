@@ -24,22 +24,113 @@ class InfluxAdapter:
         self.headers = {"Authorization": "Token " + credentials["token"]}
 
     async def resources(self):
-        orgs = await self.http.json(
-            "GET", self.url + "/api/v2/orgs", headers=self.headers, params={"limit": 100}
-        )
+        try:
+            orgs = await self.http.json(
+                "GET", self.url + "/api/v2/orgs", headers=self.headers, params={"limit": 100}
+            )
+        except ProviderError:
+            orgs = {}
         params = {"limit": 100}
         if self.config.get("org_id"):
             params["orgID"] = self.config["org_id"]
-        buckets = await self.http.json(
-            "GET", self.url + "/api/v2/buckets", headers=self.headers, params=params
-        )
+        buckets = [
+            {"id": i["id"], "name": i["name"], "org_id": i["orgID"]}
+            for i in (
+                await self.http.json(
+                    "GET", self.url + "/api/v2/buckets", headers=self.headers, params=params
+                )
+            ).get("buckets", [])
+        ]
+        organizations = {i["id"]: i["name"] for i in orgs.get("orgs", [])}
+        # Read tokens scoped to buckets usually cannot list organizations; each
+        # bucket still names its organization, which is all a query needs.
+        for bucket in buckets:
+            organizations.setdefault(bucket["org_id"], f"Organization {bucket['org_id']}")
         return {
-            "organizations": [{"id": i["id"], "name": i["name"]} for i in orgs.get("orgs", [])],
-            "buckets": [
-                {"id": i["id"], "name": i["name"], "org_id": i["orgID"]}
-                for i in buckets.get("buckets", [])
-            ],
+            "organizations": [{"id": k, "name": v} for k, v in organizations.items()],
+            "buckets": buckets,
         }
+
+    def _enabled_bucket(self, bucket_id):
+        if bucket_id not in self.config.get("bucket_ids", []):
+            raise ServiceError("This bucket is not enabled for this connection.", 403)
+        if not self.config.get("org_id"):
+            raise ServiceError("Choose an InfluxDB organization first.", 422)
+
+    async def bucket_names(self):
+        """Names of the enabled buckets, keyed by ID."""
+        buckets = await self.http.json(
+            "GET",
+            self.url + "/api/v2/buckets",
+            headers=self.headers,
+            params={"limit": 100, "orgID": self.config.get("org_id", "")},
+        )
+        enabled = set(self.config.get("bucket_ids", []))
+        return {i["id"]: i["name"] for i in buckets.get("buckets", []) if i["id"] in enabled}
+
+    async def _flux_values(self, flux, limit):
+        raw = await self.http.request(
+            "POST",
+            self.url + "/api/v2/query",
+            headers={**self.headers, "Accept": "application/csv"},
+            params={"orgID": self.config["org_id"]},
+            json={"query": flux, "type": "flux", "dialect": {"annotations": []}},
+        )
+        reader = csv.DictReader(
+            line
+            for line in io.StringIO(raw.decode("utf-8"))
+            if line.strip() and not line.startswith("#")
+        )
+        values = [row.get("_value") or row.get("_time") for row in reader]
+        return [v for v in values if v and v not in ("_value", "_time")][:limit]
+
+    async def describe(self, *, bucket_id, measurement=None, lookback_days=365):
+        """List measurements, or one measurement's fields, tag keys and latest reading.
+
+        Uses InfluxDB schema metadata queries generated here; no caller-supplied Flux.
+        """
+        self._enabled_bucket(bucket_id)
+        if not 1 <= int(lookback_days) <= 3650:
+            raise ServiceError("Choose a lookback between 1 and 3650 days.", 422)
+        if measurement is not None and (
+            not isinstance(measurement, str)
+            or not 1 <= len(measurement) <= 200
+            or "${" in measurement
+        ):
+            raise ServiceError("Invalid measurement name.", 422)
+        name = (await self.bucket_names()).get(bucket_id)
+        if not name:
+            raise ServiceError("This bucket is not available to the configured token.", 404)
+        q = lambda value: json.dumps(value, ensure_ascii=False)
+        start = f"-{int(lookback_days)}d"
+        schema = 'import "influxdata/influxdb/schema"\n'
+        result = {"bucket_id": bucket_id, "bucket": name, "lookback_days": int(lookback_days)}
+        if measurement is None:
+            result["measurements"] = await self._flux_values(
+                schema + f"schema.measurements(bucket: {q(name)}, start: {start})", 200
+            )
+            return result
+        args = f"bucket: {q(name)}, measurement: {q(measurement)}, start: {start}"
+        fields = await self._flux_values(schema + f"schema.measurementFieldKeys({args})", 300)
+        tags = await self._flux_values(schema + f"schema.measurementTagKeys({args})", 60)
+        result.update(
+            measurement=measurement,
+            fields=fields,
+            tag_keys=[t for t in tags if not t.startswith("_")][:50],
+            latest_reading_at=None,
+        )
+        if fields:
+            try:
+                latest = await self._flux_values(
+                    f"from(bucketID: {q(bucket_id)}) |> range(start: {start}) "
+                    f"|> filter(fn: (r) => r._measurement == {q(measurement)} and r._field == {q(fields[0])}) "
+                    '|> last() |> keep(columns: ["_time"])',
+                    1,
+                )
+                result["latest_reading_at"] = latest[0] if latest else None
+            except ProviderError:
+                pass  # Recency is a hint; the field list is still valid.
+        return result
 
     async def query_series(
         self,
@@ -54,10 +145,7 @@ class InfluxAdapter:
         aggregation="mean",
         tags=None,
     ):
-        if bucket_id not in self.config.get("bucket_ids", []):
-            raise ServiceError("This bucket is not enabled for this connection.", 403)
-        if not self.config.get("org_id"):
-            raise ServiceError("Choose an InfluxDB organization first.", 422)
+        self._enabled_bucket(bucket_id)
         if (
             start.tzinfo is None
             or stop.tzinfo is None

@@ -27,7 +27,7 @@
     if(!alive||seq!==generation)return;
     try {
       const result=await api(`/agent-runs/${id}`); if(!alive||seq!==generation)return;run=result;
-      if(['queued','running','waiting','cancel_requested'].includes(result.status)) timer=setTimeout(()=>poll(id,seq),1800);
+      if(['queued','running','waiting','cancel_requested'].includes(result.status)) timer=setTimeout(()=>poll(id,seq),600);
       else { messages=await api(`/conversations/${selected}/messages`);if(result.error)error=result.error;await load(); }
     }catch(e){if(alive&&seq===generation){error=e.message;timer=setTimeout(()=>poll(id,seq),5000);}}
   }

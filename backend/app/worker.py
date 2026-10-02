@@ -719,10 +719,13 @@ async def serve(role="all"):
             except Exception as exc:
                 log.error("Worker lane failed: role=%s error_type=%s", name, type(exc).__name__)
             if not worked:
+                idle = (
+                    worker.settings.agent_poll_seconds
+                    if name == "executor"
+                    else worker.settings.worker_poll_seconds
+                )
                 try:
-                    await asyncio.wait_for(
-                        stopping.wait(), timeout=worker.settings.worker_poll_seconds
-                    )
+                    await asyncio.wait_for(stopping.wait(), timeout=idle)
                 except TimeoutError:
                     pass
 

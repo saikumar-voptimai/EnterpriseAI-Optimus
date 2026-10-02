@@ -6,7 +6,7 @@ from alembic import context
 from sqlalchemy import create_engine, pool, text
 
 from app.config import get_settings
-from app.db_hardening import lock_down_public_schema
+from app.db_hardening import lock_down_schema
 from app.models import Base
 
 config = context.config
@@ -28,12 +28,18 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
+    settings = get_settings()
+    schema = settings.database_schema
     connectable = create_engine(
-        get_settings().database_url,
+        settings.database_url,
         poolclass=pool.NullPool,
-        connect_args={"options": "-c timezone=UTC"},
+        connect_args={"options": settings.connect_options},
     )
     with connectable.connect() as connection:
+        if schema != "public":
+            # The connection's search_path puts this schema first, so unqualified
+            # migration DDL creates every table, type and index inside it.
+            connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
         # Revision 0002 stores pgvector columns. Managed PostgreSQL (Neon, Supabase) and
         # the pgvector image ship the extension but do not enable it in a new database.
         # Supabase keeps extensions in its `extensions` schema (on the search_path)
@@ -48,12 +54,17 @@ def run_migrations_online() -> None:
             )
         )
         connection.commit()
-        context.configure(connection=connection, target_metadata=target_metadata, compare_type=True)
+        context.configure(
+            connection=connection,
+            target_metadata=target_metadata,
+            compare_type=True,
+            version_table_schema=schema,
+        )
         with context.begin_transaction():
             context.run_migrations()
-            # Supabase exposes the public schema via its Data API; close it in the
-            # same transaction so no migrated table is ever readable through it.
-            lock_down_public_schema(connection)
+            # Supabase exposes schemas via its Data API; close the application schema
+            # in the same transaction so no migrated table is ever readable through it.
+            lock_down_schema(connection, schema)
 
 
 if context.is_offline_mode():

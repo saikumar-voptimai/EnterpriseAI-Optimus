@@ -279,6 +279,10 @@ class ConnectionService:
             }
         elif obj.provider == "influxdb":
             result = await InfluxAdapter(obj.config, self.credentials(obj), self.http).resources()
+            organizations = result["organizations"]
+            if user.is_admin and not obj.config.get("org_id") and len(organizations) == 1:
+                # A single reachable organization needs no choice.
+                obj.config = {**obj.config, "org_id": organizations[0]["id"]}
         elif obj.provider == "zoom":
             await ZoomAdapter(self.credentials(obj), self.http).token()
             result = {
@@ -299,6 +303,22 @@ class ConnectionService:
         obj.last_error = None
         self.db.flush()
         return result
+
+    def _influx(self, user, connection_id):
+        obj = self.repo.get(user, connection_id)
+        if obj.provider != "influxdb":
+            raise ServiceError("Choose an InfluxDB connection.", 422)
+        return InfluxAdapter(obj.config, self.credentials(obj), self.http)
+
+    async def bucket_names(self, user, connection_id):
+        return await self._influx(user, connection_id).bucket_names()
+
+    async def describe_series(
+        self, user, connection_id, *, bucket_id, measurement=None, lookback_days=365
+    ):
+        return await self._influx(user, connection_id).describe(
+            bucket_id=bucket_id, measurement=measurement, lookback_days=lookback_days
+        )
 
     async def query_series(
         self,
