@@ -1,33 +1,39 @@
-# Running Optimus on a Windows laptop (Neon + Qdrant + OpenRouter)
+# Running Optimus locally (Neon + Qdrant + OpenRouter)
 
 This is the demo/evaluation setup: no Docker required, data in a Neon PostgreSQL
 project, semantic search in a local Qdrant, and three OpenRouter model levels.
-The Jetson/Docker deployment in [JETSON.md](JETSON.md) is unchanged.
+All commands are bash. They run in Git Bash on Windows, and in Linux or macOS
+terminals. The Jetson/Docker deployment in [JETSON.md](JETSON.md) is unchanged.
 
 | Component | Where it runs | Holds |
 | --- | --- | --- |
 | Web app + API (FastAPI, Svelte build) | `http://localhost:8088` on the laptop | Nothing; stateless |
 | Workers (scheduler, executor, connectors, meetings) | Background process on the laptop | Nothing; stateless |
 | Neon PostgreSQL | Neon cloud | Users, chats and agent runs, documents and revisions, embeddings, jobs, incidents, meetings |
-| Qdrant | `.local\qdrant` on the laptop (or Qdrant Cloud) | Similarity index rebuilt from PostgreSQL |
+| Qdrant | `.local/qdrant` on the laptop (or Qdrant Cloud) | Similarity index rebuilt from PostgreSQL |
 | OpenRouter | Cloud | Model and embedding calls |
 
 ## Prerequisites
 
-- Python 3.12 (`py -3.12 --version`), Node.js 22 or newer, Git.
+- Python 3.12, Node.js 22 or newer, Git, curl.
 - A Neon project. Neon includes pgvector; the migrations enable it automatically.
 - An OpenRouter API key with credit.
 
+The `.venv` and Qdrant binary are platform-specific. If you switch between Git Bash
+and WSL, use a separate clone for each.
+
 ## 1. One-time setup
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\local\setup.ps1
+```bash
+./scripts/local/setup.sh
 ```
 
 This creates `.venv`, installs backend packages, builds the frontend, downloads
-Qdrant into `.local\qdrant`, and creates `.env` from
+Qdrant into `.local/qdrant`, and creates `.env` from
 [`.env.local.example`](../.env.local.example) with a generated first-run token and
 credential-encryption key. Back up `.env`; it is never committed.
+
+Options: `--skip-frontend`, `--skip-qdrant`.
 
 ## 2. Fill in `.env`
 
@@ -56,19 +62,24 @@ Chat and job forms show the levels as *Fast / Standard / Deep*.
 
 ## 3. Start and stop
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\local\start.ps1
+```bash
+./scripts/local/start.sh
 ```
 
 The script starts Qdrant, applies migrations to Neon, starts the workers in the
-background and runs the web app in the foreground. Open `http://localhost:8088`,
-enter the printed setup token once to create the administrator and enterprise, then
-follow the [user guide](USER_GUIDE.md).
+background and runs the web app. Open `http://localhost:8088`, enter the printed
+setup token once to create the administrator and enterprise, then follow the
+[user guide](USER_GUIDE.md).
 
-Press **Ctrl+C** to stop everything. If the window was closed instead, run
-`scripts\local\stop.ps1`. Logs are in `.local\logs` (`worker.log`, `qdrant.err.log`).
+Press **Ctrl+C** to stop everything. If the terminal was closed instead, run
+`./scripts/local/stop.sh`. Logs:
 
-Options: `-NoWorker` runs only the web app; `-SkipMigrations` skips Alembic.
+```bash
+tail -f .local/logs/worker.log    # workers
+tail -f .local/logs/qdrant.log    # Qdrant
+```
+
+Options: `--no-worker` runs only the web app; `--skip-migrations` skips Alembic.
 
 ## Data and vectors
 
@@ -76,10 +87,11 @@ Options: `-NoWorker` runs only the web app; `-SkipMigrations` skips Alembic.
   Qdrant only ranks candidates. Every candidate is re-checked against workspace
   membership, classification and external-AI permission in SQL before it is used,
   so Qdrant never widens access.
-- Rebuild or refill Qdrant from Neon at any time (for example on a new laptop):
+- Rebuild or refill Qdrant from Neon at any time (for example on a new laptop).
+  Use `.venv/bin/python` instead of `.venv/Scripts/python` on Linux or macOS:
 
-  ```powershell
-  cd backend; ..\.venv\Scripts\python.exe -m app.knowledge_cli qdrant-sync
+  ```bash
+  cd backend && ../.venv/Scripts/python -m app.knowledge_cli qdrant-sync
   ```
 
 - To move semantic search back into PostgreSQL later, set `VECTOR_BACKEND=pgvector`.
@@ -98,16 +110,15 @@ or raise the interval if compute hours matter more than responsiveness.
 Tests **truncate every table**. Never point them at the Neon database you demo
 from. Use a disposable database, such as a separate Neon branch or a local container:
 
-```powershell
-docker run -d --name optimus-test-db -e POSTGRES_USER=optimus -e POSTGRES_PASSWORD=optimus-test `
+```bash
+docker run -d --name optimus-test-db -e POSTGRES_USER=optimus -e POSTGRES_PASSWORD=optimus-test \
   -e POSTGRES_DB=optimus_test -p 127.0.0.1:55432:5432 pgvector/pgvector:0.8.6-pg16-bookworm
 docker run -d --name optimus-test-qdrant -p 127.0.0.1:56333:6333 qdrant/qdrant:v1.19.1
 
-cd backend
-$env:PYTHONUTF8 = "1"
-$env:TEST_DATABASE_URL = "postgresql+psycopg://optimus:optimus-test@127.0.0.1:55432/optimus_test"
-$env:TEST_QDRANT_URL = "http://127.0.0.1:56333"
-..\.venv\Scripts\python.exe -m pytest -q tests
+export PYTHONUTF8=1 PYTHONPATH=backend
+export TEST_DATABASE_URL=postgresql+psycopg://optimus:optimus-test@127.0.0.1:55432/optimus_test
+export TEST_QDRANT_URL=http://127.0.0.1:56333   # optional; enables the live Qdrant test
+.venv/Scripts/python -m pytest -q backend/tests
 ```
 
-`TEST_QDRANT_URL` is optional; without it the live Qdrant test is skipped.
+Later sessions only need `docker start optimus-test-db optimus-test-qdrant`.

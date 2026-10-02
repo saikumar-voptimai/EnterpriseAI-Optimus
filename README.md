@@ -4,13 +4,13 @@ An enterprise assistant with personal capture and follow-up, governed team works
 
 The first deployment targets one enterprise on an **NVIDIA Jetson Orin Nano 8 GB**, using **Tailscale Serve** for private HTTPS. Generation and embeddings use OpenRouter. No GPU container runtime or local model download is needed.
 
-## Laptop demo (Windows, Neon + Qdrant)
+## Laptop demo (Neon + Qdrant)
 
-For stakeholder demos and feature testing on a Windows laptop, without Docker, see **[docs/LOCAL_DEV.md](docs/LOCAL_DEV.md)**: Neon PostgreSQL as the database, Qdrant for semantic search, and three OpenRouter model levels (Fast / Standard / Deep).
+For stakeholder demos and feature testing on a laptop, without Docker, see **[docs/LOCAL_DEV.md](docs/LOCAL_DEV.md)**: Neon PostgreSQL as the database, Qdrant for semantic search, and three OpenRouter model levels (Fast / Standard / Deep). Bash commands; Git Bash on Windows, Linux and macOS.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\local\setup.ps1   # once
-powershell -ExecutionPolicy Bypass -File scripts\local\start.ps1   # http://localhost:8088
+```bash
+./scripts/local/setup.sh   # once
+./scripts/local/start.sh   # http://localhost:8088
 ```
 
 ## Start the application
@@ -82,7 +82,7 @@ Do not use `docker compose down -v` to restart or upgrade: it deletes persistent
 
 ## Documentation
 
-- [Windows laptop demo with Neon and Qdrant](docs/LOCAL_DEV.md)
+- [Laptop demo with Neon and Qdrant](docs/LOCAL_DEV.md)
 - [Jetson and Tailscale installation](docs/JETSON.md)
 - [User guide and demonstration workflow](docs/USER_GUIDE.md)
 - [Architecture and method map](docs/ARCHITECTURE.md)
