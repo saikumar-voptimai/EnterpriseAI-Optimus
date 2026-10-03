@@ -24,7 +24,8 @@ class Connection(Identified, Mutable, Base):
     __tablename__ = "connections"
     __table_args__ = (
         CheckConstraint(
-            "provider IN ('microsoft','zoom','influxdb','teams_workflow')", name="provider"
+            "provider IN ('microsoft','zoom','influxdb','teams_workflow','google','slack_webhook')",
+            name="provider",
         ),
         CheckConstraint("status IN ('pending','connected','error','disconnected')", name="status"),
         Index("ix_connections_sync", "provider", "status", "next_sync_at"),
@@ -162,7 +163,7 @@ class Delivery(Identified, Mutable, Base):
     __tablename__ = "deliveries"
     __table_args__ = (
         UniqueConstraint("owner_id", "request_id"),
-        CheckConstraint("channel IN ('email','teams')", name="channel"),
+        CheckConstraint("channel IN ('email','teams','slack')", name="channel"),
         CheckConstraint(
             "status IN ('pending','sending','sent','cancelled','failed','unknown')", name="status"
         ),

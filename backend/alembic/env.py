@@ -40,10 +40,9 @@ def run_migrations_online() -> None:
             # The connection's search_path puts this schema first, so unqualified
             # migration DDL creates every table, type and index inside it.
             connection.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
-        # Revision 0002 stores pgvector columns. Managed PostgreSQL (Neon, Supabase) and
-        # the pgvector image ship the extension but do not enable it in a new database.
-        # Supabase keeps extensions in its `extensions` schema (on the search_path)
-        # rather than in the API-exposed public schema.
+        # Revision 0002 stores pgvector columns. Managed PostgreSQL and the pgvector
+        # image ship the extension but do not enable it in a new database. Where an
+        # `extensions` schema exists (on the search_path), keep it out of public.
         extensions_schema = connection.execute(
             text("SELECT 1 FROM pg_namespace WHERE nspname = 'extensions'")
         ).scalar()
@@ -62,8 +61,8 @@ def run_migrations_online() -> None:
         )
         with context.begin_transaction():
             context.run_migrations()
-            # Supabase exposes schemas via its Data API; close the application schema
-            # in the same transaction so no migrated table is ever readable through it.
+            # Hosted data APIs can expose schemas; close the application schema in the
+            # same transaction so no migrated table is ever readable through one.
             lock_down_schema(connection, schema)
 
 

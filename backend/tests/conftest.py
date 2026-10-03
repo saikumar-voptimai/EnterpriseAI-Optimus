@@ -29,8 +29,8 @@ os.environ.update(
         "OPENROUTER_MODELS": "test/model-a,test/model-b",
         "OPENROUTER_DEFAULT_MODEL": "test/model-a",
         "OPENROUTER_MODEL_FAST": "",
-        "OPENROUTER_MODEL_STANDARD": "",
-        "OPENROUTER_MODEL_DEEP": "",
+        "OPENROUTER_MODEL_MEDIUM": "",
+        "OPENROUTER_MODEL_HIGH": "",
         "OPENROUTER_SYSTEM1_MODEL": "",
         "VECTOR_BACKEND": "pgvector",
     }

@@ -1,4 +1,4 @@
-"""Supabase Data API lockdown, simulated with its roles inside a rolled-back transaction."""
+"""Hosted data API lockdown, simulated with API roles inside a rolled-back transaction."""
 
 import pytest
 from sqlalchemy import text
@@ -16,10 +16,12 @@ def test_api_roles_lose_table_access_and_every_table_gets_rls(db_engine):
     with db_engine.connect() as connection:
         transaction = connection.begin()
         try:
+            created = []
             for role in API_ROLES:
                 if not scalar(connection, "SELECT 1 FROM pg_roles WHERE rolname = :r", r=role):
                     connection.execute(text(f"CREATE ROLE {role} NOLOGIN"))
-                # Supabase's default grants on the public schema.
+                    created.append(role)
+                # A hosted platform's default grants on the public schema.
                 connection.execute(text(f"GRANT USAGE ON SCHEMA public TO {role}"))
                 connection.execute(text(f"GRANT ALL ON ALL TABLES IN SCHEMA public TO {role}"))
             assert scalar(
@@ -28,7 +30,8 @@ def test_api_roles_lose_table_access_and_every_table_gets_rls(db_engine):
 
             result = lock_down_schema(connection)
 
-            assert result["api_roles"] == list(API_ROLES) and result["tables"] > 0
+            # Hosts may define further API roles (Neon also has "anonymous").
+            assert set(API_ROLES) <= set(result["api_roles"])
             for role in API_ROLES:
                 for table, privilege in (("users", "SELECT"), ("auth_sessions", "INSERT")):
                     assert not scalar(
@@ -43,11 +46,14 @@ def test_api_roles_lose_table_access_and_every_table_gets_rls(db_engine):
                 )
                 == 0
             )
-            savepoint = connection.begin_nested()
-            connection.execute(text("SET LOCAL ROLE anon"))
-            with pytest.raises(ProgrammingError, match="permission denied"):
-                connection.execute(text("SELECT count(*) FROM users"))
-            savepoint.rollback()
+            if "anon" in created:
+                # Act as the API role. A non-superuser test owner needs membership first.
+                connection.execute(text("GRANT anon TO CURRENT_USER"))
+                savepoint = connection.begin_nested()
+                connection.execute(text("SET LOCAL ROLE anon"))
+                with pytest.raises(ProgrammingError, match="permission denied"):
+                    connection.execute(text("SELECT count(*) FROM users"))
+                savepoint.rollback()
             # The owning application role is unaffected.
             assert scalar(connection, "SELECT count(*) FROM users") >= 0
             # A second run (every migration) is a no-op for already protected tables.
@@ -62,9 +68,9 @@ def test_plain_postgres_without_api_roles_is_untouched(db_engine):
         try:
             if scalar(
                 connection,
-                "SELECT count(*) FROM pg_roles WHERE rolname IN ('anon', 'authenticated')",
+                "SELECT count(*) FROM pg_roles WHERE rolname IN ('anon', 'anonymous', 'authenticated')",
             ):
-                pytest.skip("This test database already defines Supabase API roles")
+                pytest.skip("This test database already defines data API roles")
             assert lock_down_schema(connection) == {"api_roles": [], "tables": 0}
             assert not scalar(
                 connection,

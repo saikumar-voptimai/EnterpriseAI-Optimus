@@ -281,11 +281,9 @@ class MeetingService:
         if room.status in {"published", "archived"}:
             raise ServiceError("This meeting has already been published or archived.", 409)
         if not external_ai_consent or not settings.allow_external_ai:
-            raise ServiceError(
-                "Approve sending these meeting artifacts to the configured model.", 403
-            )
+            raise ServiceError("Approve AI processing of these meeting artifacts first.", 403)
         if not settings.openrouter_api_key:
-            raise ServiceError("Configure the model API key first.", 503)
+            raise ServiceError("The AI service is not configured.", 503)
         existing = self.db.scalar(
             select(MeetingExtraction).where(
                 MeetingExtraction.room_id == rid,

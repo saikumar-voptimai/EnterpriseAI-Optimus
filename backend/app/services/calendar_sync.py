@@ -5,10 +5,28 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import delete, select
 from app.models import User, utcnow
 from app.models_connections import CalendarEvent, Connection
+from app.connectors.google import GoogleAdapter, google_datetime, google_event_values
 from app.connectors.microsoft import MicrosoftAdapter, graph_datetime
 from app.repositories.access import AccessRepository
 from app.services.connections import ConnectionService
 from app.services.errors import ServiceError, ProviderError
+
+CALENDAR_PROVIDERS = ("microsoft", "google")
+
+
+def microsoft_event_values(event):
+    return dict(
+        title=(event.get("subject") or "Untitled meeting")[:500],
+        cancelled=bool(event.get("isCancelled")),
+        busy=event.get("showAs") not in {"free", "workingElsewhere"},
+        details={
+            "organizer": event.get("organizer"),
+            "attendees": event.get("attendees", []),
+            "online_meeting": event.get("onlineMeeting"),
+            "web_link": event.get("webLink"),
+            "provider_modified_at": event.get("lastModifiedDateTime"),
+        },
+    )
 
 
 class CalendarSyncService:
@@ -19,8 +37,8 @@ class CalendarSyncService:
 
     async def sync(self, user, rid):
         connection = self.connections.repo.get(user, rid, manage=True, lock=True)
-        if connection.provider != "microsoft":
-            raise ServiceError("Only Outlook connections have a calendar sync.", 422)
+        if connection.provider not in CALENDAR_PROVIDERS:
+            raise ServiceError("Only calendar connections can be synchronized.", 422)
         try:
             async with asyncio.timeout(120):
                 await self._sync(connection)
@@ -38,16 +56,28 @@ class CalendarSyncService:
         }
 
     async def _sync(self, connection):
-        token = await self.connections.microsoft_token(connection)
-        adapter = MicrosoftAdapter(self.settings, self.http)
         start, end = utcnow() - timedelta(days=7), utcnow() + timedelta(days=30)
         selected = connection.config.get("calendar_ids", [])
         if not selected:
             raise ServiceError("Select a calendar before syncing.", 422)
+        if connection.provider == "google":
+            token = await self.connections.google_token(connection)
+            adapter, parse_time, values_of = (
+                GoogleAdapter(self.settings, self.http),
+                google_datetime,
+                google_event_values,
+            )
+        else:
+            token = await self.connections.microsoft_token(connection)
+            adapter, parse_time, values_of = (
+                MicrosoftAdapter(self.settings, self.http),
+                graph_datetime,
+                microsoft_event_values,
+            )
         incoming = []
         for calendar_id in selected:
             for event in await adapter.events(token, calendar_id, start, end):
-                begin, finish = graph_datetime(event["start"]), graph_datetime(event["end"])
+                begin, finish = parse_time(event["start"]), parse_time(event["end"])
                 if finish < begin:
                     raise ProviderError("Calendar event ends before it begins.")
                 incoming.append((calendar_id, event, begin, finish))
@@ -75,20 +105,7 @@ class CalendarSyncService:
                     provider_id=event["id"],
                 )
                 self.db.add(row)
-            values = dict(
-                title=(event.get("subject") or "Untitled meeting")[:500],
-                starts_at=begin,
-                ends_at=finish,
-                cancelled=bool(event.get("isCancelled")),
-                busy=event.get("showAs") not in {"free", "workingElsewhere"},
-                details={
-                    "organizer": event.get("organizer"),
-                    "attendees": event.get("attendees", []),
-                    "online_meeting": event.get("onlineMeeting"),
-                    "web_link": event.get("webLink"),
-                    "provider_modified_at": event.get("lastModifiedDateTime"),
-                },
-            )
+            values = dict(starts_at=begin, ends_at=finish, **values_of(event))
             for key, value in values.items():
                 if getattr(row, key, None) != value:
                     setattr(row, key, value)
@@ -105,7 +122,7 @@ class CalendarSyncService:
         row = self.db.scalar(
             select(Connection)
             .where(
-                Connection.provider == "microsoft",
+                Connection.provider.in_(CALENDAR_PROVIDERS),
                 Connection.status.in_(["connected", "error"]),
                 Connection.next_sync_at <= utcnow(),
             )
@@ -182,7 +199,7 @@ class CalendarSyncService:
             self.db.scalars(
                 select(Connection).where(
                     Connection.owner_id == user.id,
-                    Connection.provider == "microsoft",
+                    Connection.provider.in_(CALENDAR_PROVIDERS),
                     Connection.status.in_(["connected", "error"]),
                 )
             )

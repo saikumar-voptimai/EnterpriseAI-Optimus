@@ -49,7 +49,7 @@ class AgentRunService:
                 prior.conversation_id != conversation_id
                 or not message
                 or message.content != query
-                or (model and prior.model != model)
+                or (model and prior.model != select_model(model, self.settings))
             ):
                 raise ServiceError(
                     "This request identifier was already used for a different message.", 409
@@ -151,6 +151,7 @@ class AgentRunService:
             "usage",
         )
         output = {key: getattr(run, key) for key in keys}
+        output["model"] = self.settings.public_model(run.model)
         if include_events:
             events = self.session.scalars(
                 select(AgentRunEvent)

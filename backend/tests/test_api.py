@@ -138,7 +138,8 @@ def test_documents_and_chat_actual_gateway_contract(client, db, monkeypatch):
     )
     assert result.status_code == 200, result.text
     answer = result.json()["assistant_message"]
-    assert answer["model"] == "test/model-a"
+    # Clients see the model level, never the provider model name.
+    assert answer["model"] == "medium" and "test/model-a" not in result.text
     assert any(source["id"] == doc_id for source in answer["source_refs"])
     assert len(client.get(endpoint).json()) == 2
     assert len(called) == 1

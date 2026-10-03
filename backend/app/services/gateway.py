@@ -25,8 +25,11 @@ def allowed_models(settings: Any = None) -> list[str]:
 def select_model(model: str | None = None, settings: Any = None) -> str:
     settings = settings or get_settings()
     selected = model or settings.openrouter_default_model
+    resolve = getattr(settings, "resolve_model", None)
+    if resolve is not None:
+        selected = resolve(selected)
     if selected not in allowed_models(settings):
-        raise ServiceError("The selected model is not in the configured model allowlist.", 400)
+        raise ServiceError("The selected model level is not available (allowlist).", 400)
     return selected
 
 
@@ -61,7 +64,7 @@ class OpenRouterGateway:
         if hasattr(key, "get_secret_value"):
             key = key.get_secret_value()
         if not key:
-            raise ServiceError("The OpenRouter API key is not configured.", 503)
+            raise ServiceError("The AI service is not configured.", 503)
         timeout = min(max(float(self.settings.openrouter_timeout_seconds), 1.0), 300.0)
         try:
             async with asyncio.timeout(timeout):
@@ -79,7 +82,7 @@ class OpenRouterGateway:
                     ) as response:
                         if response.status_code != 200:
                             raise ProviderError(
-                                f"OpenRouter returned HTTP {response.status_code}. Request {request_id}.",
+                                f"The AI service returned HTTP {response.status_code}. Request {request_id}.",
                                 retryable=response.status_code == 429
                                 or response.status_code >= 500,
                                 request_id=request_id,
@@ -89,7 +92,7 @@ class OpenRouterGateway:
                             body.extend(part)
                             if len(body) > MAX_RESPONSE_BYTES:
                                 raise ProviderError(
-                                    "OpenRouter response exceeded the size limit.",
+                                    "The AI service response exceeded the size limit.",
                                     request_id=request_id,
                                 )
             data = json.loads(body)
@@ -100,19 +103,19 @@ class OpenRouterGateway:
             raise
         except (TimeoutError, httpx.TimeoutException) as exc:
             raise ProviderError(
-                f"OpenRouter timed out. Request {request_id}.",
+                f"The AI service timed out. Request {request_id}.",
                 retryable=True,
                 request_id=request_id,
             ) from exc
         except httpx.HTTPError as exc:
             raise ProviderError(
-                f"OpenRouter connection failed. Request {request_id}.",
+                f"The AI service could not be reached. Request {request_id}.",
                 retryable=True,
                 request_id=request_id,
             ) from exc
         except (ValueError, TypeError) as exc:
             raise ProviderError(
-                f"OpenRouter returned an invalid response. Request {request_id}.",
+                f"The AI service returned an invalid response. Request {request_id}.",
                 request_id=request_id,
             ) from exc
 
@@ -204,7 +207,7 @@ class OpenRouterGateway:
             finish = choice.get("finish_reason")
             if finish == "length":
                 raise ProviderError(
-                    "OpenRouter reached the output limit before completing the response.",
+                    "The AI service reached the output limit before completing the response.",
                     request_id=request_id,
                 )
             if calls:
@@ -243,7 +246,7 @@ class OpenRouterGateway:
             raise
         except (KeyError, IndexError, TypeError, ValueError) as exc:
             raise ProviderError(
-                f"OpenRouter returned an invalid response. Request {request_id}.",
+                f"The AI service returned an invalid response. Request {request_id}.",
                 request_id=request_id,
             ) from exc
 
@@ -292,5 +295,5 @@ class OpenRouterGateway:
             return vectors
         except (KeyError, TypeError, ValueError) as exc:
             raise ProviderError(
-                "OpenRouter returned invalid embeddings.", request_id=request_id
+                "The AI service returned invalid embeddings.", request_id=request_id
             ) from exc

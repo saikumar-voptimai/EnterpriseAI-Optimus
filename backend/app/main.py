@@ -41,11 +41,15 @@ app.add_middleware(RequestSizeLimit)
 
 def row(obj, exclude=()):
     hidden = {"password_hash", "token_hash", "csrf_token"} | set(exclude)
-    return {
+    data = {
         col.key: getattr(obj, col.key)
         for col in sa_inspect(obj).mapper.column_attrs
         if col.key not in hidden
     }
+    if "model" in data:
+        # Clients see the model level only, never the provider model name.
+        data["model"] = get_settings().public_model(data["model"])
+    return data
 
 
 def public_user(user):
@@ -238,7 +242,7 @@ def bootstrap(actor: Actor = Depends(current_actor)):
         "scopes": scopes(actor),
         "projects": projects(actor),
         "models": settings.model_choices,
-        "default_model": settings.openrouter_default_model,
+        "default_model": settings.public_model(settings.openrouter_default_model),
         "reviewable_scope_ids": [scope.id for scope in access(actor).reviewable_scopes(actor.user)],
         "external_ai_enabled": settings.allow_external_ai and bool(settings.openrouter_api_key),
         "notifications": notifications(actor),
@@ -627,7 +631,7 @@ def messages(rid: s.Id, actor: Actor = Depends(current_actor)):
 def chat_allowed(actor, conversation):
     settings = get_settings()
     if not settings.allow_external_ai or not settings.openrouter_api_key:
-        raise HTTPException(403, "External AI must be enabled and an OpenRouter key configured")
+        raise HTTPException(403, "AI assistance is not enabled for this installation")
     if conversation.workspace_id:
         w = access(actor).workspace(
             actor.user, conversation.workspace_id, roles=["member", "manager"]
@@ -640,7 +644,7 @@ def chat_allowed(actor, conversation):
 def send_message(rid: s.Id, data: s.ChatSend, actor: Actor = Depends(current_actor)):
     if not data.external_ai_consent:
         raise HTTPException(
-            403, "Confirm that this message and its authorized context may be sent to OpenRouter"
+            403, "Confirm that the assistant may use this conversation and its source context"
         )
     conversation = access(actor).conversation(actor.user, rid, roles=["member", "manager"])
     chat_allowed(actor, conversation)

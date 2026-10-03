@@ -1,18 +1,18 @@
-"""Post-migration hardening for managed PostgreSQL that exposes a data API.
+"""Post-migration hardening for hosted PostgreSQL that offers a data API.
 
-Supabase publishes schemas (by default `public`) through its Data API (PostgREST and
-GraphQL) to the `anon` and `authenticated` roles. The anon key is designed to be
-public, and new tables there are granted to those roles by default. Optimus never
-uses that API: it connects as the owner of its tables. When those roles exist,
-this revokes their table/sequence access and enables row-level security with no
-policies on every table, so the API can neither read nor write application data
-(users, sessions, documents, chats). Table owners bypass RLS, so the application
-is unaffected. Plain PostgreSQL (Docker, Neon) has no such roles and is unchanged.
+Hosted PostgreSQL services can publish schemas over HTTP (PostgREST-style data
+APIs, such as Neon's Data API) to roles named `anonymous`/`anon` and
+`authenticated`, and may grant new tables to them by default. Optimus never uses
+such an API: it connects as the owner of its tables. When those roles exist, this
+revokes their table/sequence access and enables row-level security with no
+policies on every application table, so the API can neither read nor write
+application data (users, sessions, documents, chats). Table owners bypass RLS, so
+the application is unaffected. A database without such roles is left unchanged.
 """
 
 from sqlalchemy import text
 
-API_ROLES = ("anon", "authenticated")
+API_ROLES = ("anon", "anonymous", "authenticated")
 
 
 def lock_down_schema(connection, schema: str = "public") -> dict:
@@ -35,7 +35,7 @@ def lock_down_schema(connection, schema: str = "public") -> dict:
         f"ALTER DEFAULT PRIVILEGES IN SCHEMA {target} REVOKE ALL ON SEQUENCES FROM {grantees}",
     ]
     if schema != "public":
-        # Supabase's own services expect public to stay usable; others need not be.
+        # Platform services may rely on public staying usable; other schemas need not.
         statements.append(f"REVOKE ALL ON SCHEMA {target} FROM {grantees}")
     for statement in statements:
         connection.execute(text(statement))

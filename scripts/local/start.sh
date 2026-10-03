@@ -3,24 +3,42 @@
 # background workers and the web app at http://localhost:<APP_PORT>.
 # Ctrl+C stops everything this script started.
 #
-#   ./scripts/local/start.sh [--no-worker] [--skip-migrations]
+#   ./scripts/local/start.sh [--env demo|development|...] [--no-worker] [--skip-migrations]
+#
+# --env NAME uses DATABASE_URL_NEON_<NAME> (or DATABASE_URL_<NAME>) from .env for this run.
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 NO_WORKER=0
 SKIP_MIGRATIONS=0
-for arg in "$@"; do
-  case "$arg" in
+TARGET_ENV=""
+while [ $# -gt 0 ]; do
+  case "$1" in
     --no-worker) NO_WORKER=1 ;;
     --skip-migrations) SKIP_MIGRATIONS=1 ;;
+    --env)
+      [ $# -ge 2 ] || die "--env needs a name, for example --env development"
+      TARGET_ENV="$2"
+      shift
+      ;;
     -h | --help)
-      sed -n '2,7p' "$0"
+      sed -n '2,9p' "$0"
       exit 0
       ;;
-    *) die "unknown option: $arg" ;;
+    *) die "unknown option: $1" ;;
   esac
+  shift
 done
+
+if [ -n "$TARGET_ENV" ]; then
+  key="$(printf '%s' "$TARGET_ENV" | tr '[:lower:]-' '[:upper:]_')"
+  url="$(env_value "DATABASE_URL_NEON_$key")"
+  [ -n "$url" ] || url="$(env_value "DATABASE_URL_$key")"
+  [ -n "$url" ] || die "no DATABASE_URL_NEON_$key or DATABASE_URL_$key in .env"
+  export DATABASE_URL="$url"
+  echo "Database: $TARGET_ENV branch"
+fi
 
 [ -x "$VENV_PY" ] || die "run ./scripts/local/setup.sh first."
 [ -f "$ENV_FILE" ] || die "no .env found; run ./scripts/local/setup.sh first."

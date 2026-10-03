@@ -11,6 +11,7 @@ from app.models import User
 from app.api_connections import Strict
 from app.services.meetings import MeetingService, Minutes
 from app.services.connections import ConnectionService
+from app.connectors.google import GoogleAdapter
 from app.connectors.microsoft import MicrosoftAdapter
 from app.connectors.zoom import ZoomAdapter
 from app.services.errors import ServiceError
@@ -102,6 +103,10 @@ async def discover_provider_artifacts(
             {"id": r["id"], "kind": "transcript", "created_at": r.get("createdDateTime")}
             for r in results
         ]
+    elif obj.provider == "google":
+        artifacts = await GoogleAdapter(service.settings).meet_transcripts(
+            await service.google_token(obj), meeting_id
+        )
     elif obj.provider == "zoom":
         result, _ = await ZoomAdapter(service.credentials(obj)).recordings(meeting_id)
         artifacts = [
@@ -110,7 +115,7 @@ async def discover_provider_artifacts(
             if r.get("recording_type") == "audio_transcript" and r.get("status") == "completed"
         ]
     else:
-        raise ServiceError("Choose a Microsoft or Zoom connection.", 422)
+        raise ServiceError("Choose a Google, Microsoft or Zoom connection.", 422)
     actor.db.commit()
     return {"artifacts": artifacts}
 
@@ -129,18 +134,25 @@ async def provider_artifact(
         text = await MicrosoftAdapter(service.settings).transcript(
             await service.microsoft_token(obj), data.meeting_id, data.artifact_id
         )
+    elif obj.provider == "google":
+        text = await GoogleAdapter(service.settings).meet_transcript_text(
+            await service.google_token(obj), data.artifact_id
+        )
     elif obj.provider == "zoom":
         text = await ZoomAdapter(service.credentials(obj)).transcript(
             data.meeting_id, data.artifact_id
         )
     else:
-        raise ServiceError("Choose a Microsoft or Zoom connection.", 422)
+        raise ServiceError("Choose a Google, Microsoft or Zoom connection.", 422)
     meetings.import_artifact(
         actor.user,
         rid,
         kind="transcript",
         content=text,
-        source_label=obj.provider + " transcript",
+        source_label={"google": "Google Meet", "microsoft": "Teams", "zoom": "Zoom"}.get(
+            obj.provider, "Meeting"
+        )
+        + " transcript",
         provider_reference={
             "provider": obj.provider,
             "connection_id": obj.id,

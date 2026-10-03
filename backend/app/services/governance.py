@@ -8,7 +8,7 @@ import hashlib
 import json
 import secrets
 from datetime import timedelta
-from sqlalchemy import select, or_
+from sqlalchemy import func, select, or_
 from app.models import (
     User,
     Workspace,
@@ -32,7 +32,9 @@ class GovernanceService:
     def delegated_scopes(self, user, capability="manage_workspaces"):
         if capability not in {"manage_workspaces", "manage_people"}:
             raise ValueError("Unknown capability")
-        now = utcnow()
+        # effective_from defaults to the database clock; compare on that clock too,
+        # so a skewed application host cannot delay or extend a delegation.
+        now = func.now()
         return list(
             self.db.scalars(
                 select(ScopeRoleAssignment.scope_id).where(

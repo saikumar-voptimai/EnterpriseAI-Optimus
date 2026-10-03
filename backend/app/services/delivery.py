@@ -14,7 +14,7 @@ from sqlalchemy import select
 from app.models import User, utcnow
 from app.models_connections import Delivery
 from app.repositories.access import AccessRepository, NotFound, AuthorizationError
-from app.services.connections import ConnectionService
+from app.services.connections import ConnectionService, slack_webhook
 from app.connectors.base import ConnectorHTTP, validate_url
 from app.services.errors import ServiceError, ProviderError
 
@@ -31,6 +31,9 @@ def email_address(value):
     ):
         raise ServiceError("Provide a single email address without a display name.", 422)
     return address
+
+
+CHANNEL_PROVIDERS = {"teams": "teams_workflow", "slack": "slack_webhook"}
 
 
 class DeliveryService:
@@ -75,14 +78,14 @@ class DeliveryService:
         if channel == "email":
             email_address(recipient)
             if not self.settings.smtp_host or not self.settings.smtp_from:
-                raise ServiceError("Configure SMTP_HOST and SMTP_FROM before sending email.", 503)
-        elif channel == "teams":
+                raise ServiceError("Email delivery is not configured. Ask your administrator.", 503)
+        elif channel in CHANNEL_PROVIDERS:
             connection = self.connections.repo.get(user, connection_id)
-            if connection.provider != "teams_workflow":
-                raise ServiceError("Choose a Teams Workflows connection.", 422)
+            if connection.provider != CHANNEL_PROVIDERS[channel]:
+                raise ServiceError(f"Choose a {channel.title()} connection.", 422)
             self.connections.credentials(connection)
         else:
-            raise ServiceError("Delivery channel must be email or teams.", 422)
+            raise ServiceError("Delivery channel must be email, Teams or Slack.", 422)
         if (
             "\n" in subject
             or "\r" in subject
@@ -139,9 +142,22 @@ class DeliveryService:
         message.set_content(obj.body)
         dispatch_started = False
         try:
-            with smtplib.SMTP(self.settings.smtp_host, self.settings.smtp_port, timeout=30) as smtp:
+            implicit_tls = (
+                getattr(self.settings, "smtp_ssl", False) or self.settings.smtp_port == 465
+            )
+            client = (
+                smtplib.SMTP_SSL(
+                    self.settings.smtp_host,
+                    self.settings.smtp_port,
+                    timeout=30,
+                    context=ssl.create_default_context(),
+                )
+                if implicit_tls
+                else smtplib.SMTP(self.settings.smtp_host, self.settings.smtp_port, timeout=30)
+            )
+            with client as smtp:
                 smtp.ehlo()
-                if self.settings.smtp_starttls:
+                if self.settings.smtp_starttls and not implicit_tls:
                     smtp.starttls(context=ssl.create_default_context())
                     smtp.ehlo()
                 if self.settings.smtp_username:
@@ -214,11 +230,32 @@ class DeliveryService:
                     self.connections.credentials(connection)["webhook_url"],
                     allowed_hosts=("logic.azure.com", "api.powerplatform.com"),
                 )
+            elif obj.channel == "slack":
+                connection = self.connections.repo.get(user, obj.connection_id)
+                webhook = slack_webhook(self.connections.credentials(connection)["webhook_url"])
             obj.status = "sending"
             obj.attempts += 1
             self.db.commit()
             if obj.channel == "email":
                 await asyncio.to_thread(self._send_email, obj)
+            elif obj.channel == "slack":
+                await self.http.request(
+                    "POST",
+                    webhook,
+                    json={
+                        "text": obj.subject,
+                        "blocks": [
+                            {
+                                "type": "section",
+                                "text": {"type": "mrkdwn", "text": f"*{obj.subject}*"},
+                            },
+                            {
+                                "type": "section",
+                                "text": {"type": "mrkdwn", "text": obj.body[:2900]},
+                            },
+                        ],
+                    },
+                )
             else:
                 await self.http.request(
                     "POST",
@@ -250,7 +287,7 @@ class DeliveryService:
             obj.status = "sent"
             obj.sent_at = utcnow()
             obj.last_error = None
-            if obj.channel == "teams":
+            if obj.channel in CHANNEL_PROVIDERS:
                 connection.status = "connected"
                 connection.last_error = None
         except ProviderError as exc:

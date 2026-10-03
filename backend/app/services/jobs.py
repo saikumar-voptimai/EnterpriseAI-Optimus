@@ -156,7 +156,9 @@ def validate_job_config(session, user, task_type, config, workspace_id=None):
                 )
             connection = ConnectionRepository(session).get(user, metric.connection_id)
             if connection.provider != "influxdb":
-                raise ServiceError("Operational metrics require a read-only InfluxDB connection.")
+                raise ServiceError(
+                    "Operational metrics require a read-only process data connection."
+                )
             if workspace_id and connection.workspace_id != workspace_id:
                 raise ServiceError(
                     "Workspace jobs must use connections shared with that same workspace.", 403

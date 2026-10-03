@@ -47,6 +47,7 @@ Generated from the Python source by `python3 scripts/generate_reference.py`. Use
 | `ReminderArgs` | Declarative model, schema or state definition |
 | `CalendarArgs` | Declarative model, schema or state definition |
 | `ConnectionsArgs` | Declarative model, schema or state definition |
+| `DescribeArgs` | Declarative model, schema or state definition |
 | `SeriesArgs` | Declarative model, schema or state definition |
 | `ToolResult` | Declarative model, schema or state definition |
 | `ToolRegistry` | `__init__()`, `schemas()`, `invoke()` |
@@ -71,6 +72,7 @@ Generated from the Python source by `python3 scripts/generate_reference.py`. Use
 | `ConnectionCreate` | Declarative model, schema or state definition |
 | `ConnectionUpdate` | Declarative model, schema or state definition |
 | `MicrosoftStart` | Declarative model, schema or state definition |
+| `DriveImport` | Declarative model, schema or state definition |
 | `SeriesQuery` | Declarative model, schema or state definition |
 | `DeliveryCreate` | Declarative model, schema or state definition |
 | `delivery_public()` | Module function |
@@ -81,6 +83,10 @@ Generated from the Python source by `python3 scripts/generate_reference.py`. Use
 | `disconnect()` | Module function |
 | `microsoft_start()` | Module function |
 | `microsoft_callback()` | Module function |
+| `google_start()` | Module function |
+| `google_callback()` | Module function |
+| `drive_files()` | Module function |
+| `drive_import()` | Module function |
 | `resources()` | Module function |
 | `sync()` | Module function |
 | `series()` | Module function |
@@ -262,7 +268,7 @@ Generated from the Python source by `python3 scripts/generate_reference.py`. Use
 
 | Object | Public methods / role |
 | --- | --- |
-| `Settings` | `postgres_only()`, `origin_only()`, `resolve_model_tiers()`, `allowed_models()`, `model_choices()` |
+| `Settings` | `postgres_only()`, `origin_only()`, `resolve_model_tiers()`, `connect_options()`, `allowed_models()`, `tier_models()`, `model_choices()`, `resolve_model()`, `public_model()` |
 | `get_settings()` | Module function |
 
 ## [backend/app/connectors/base.py](../backend/app/connectors/base.py)
@@ -273,11 +279,19 @@ Generated from the Python source by `python3 scripts/generate_reference.py`. Use
 | `validate_url()` | Module function |
 | `ConnectorHTTP` | `__init__()`, `request()`, `json()` |
 
+## [backend/app/connectors/google.py](../backend/app/connectors/google.py)
+
+| Object | Public methods / role |
+| --- | --- |
+| `GoogleAdapter` | `__init__()`, `redirect_uri()`, `authorize_url()`, `token()`, `get()`, `pages()`, `account()`, `calendars()`, `events()`, `drive_files()`, `drive_download()`, `meet_transcripts()`, `meet_transcript_text()` |
+| `google_datetime()` | Module function |
+| `google_event_values()` | Module function |
+
 ## [backend/app/connectors/influxdb.py](../backend/app/connectors/influxdb.py)
 
 | Object | Public methods / role |
 | --- | --- |
-| `InfluxAdapter` | `__init__()`, `resources()`, `query_series()` |
+| `InfluxAdapter` | `__init__()`, `resources()`, `bucket_names()`, `describe()`, `query_series()` |
 
 ## [backend/app/connectors/microsoft.py](../backend/app/connectors/microsoft.py)
 
@@ -297,6 +311,12 @@ Generated from the Python source by `python3 scripts/generate_reference.py`. Use
 | Object | Public methods / role |
 | --- | --- |
 | `get_session()` | Module function |
+
+## [backend/app/db_hardening.py](../backend/app/db_hardening.py)
+
+| Object | Public methods / role |
+| --- | --- |
+| `lock_down_schema()` | Module function |
 
 ## [backend/app/knowledge_cli.py](../backend/app/knowledge_cli.py)
 
@@ -548,6 +568,7 @@ Generated from the Python source by `python3 scripts/generate_reference.py`. Use
 
 | Object | Public methods / role |
 | --- | --- |
+| `microsoft_event_values()` | Module function |
 | `CalendarSyncService` | `__init__()`, `sync()`, `tick()`, `events()`, `free_slots()` |
 
 ## [backend/app/services/capture.py](../backend/app/services/capture.py)
@@ -563,7 +584,9 @@ Generated from the Python source by `python3 scripts/generate_reference.py`. Use
 
 | Object | Public methods / role |
 | --- | --- |
-| `ConnectionService` | `__init__()`, `vault()`, `credentials()`, `public()`, `list()`, `create()`, `update()`, `disconnect()`, `start_microsoft()`, `finish_microsoft()`, `microsoft_token()`, `resources()`, `query_series()` |
+| `slack_webhook()` | Module function |
+| `pkce_pair()` | Module function |
+| `ConnectionService` | `__init__()`, `vault()`, `credentials()`, `public()`, `list()`, `create()`, `update()`, `disconnect()`, `start_microsoft()`, `finish_microsoft()`, `microsoft_token()`, `start_google()`, `finish_google()`, `google_token()`, `drive_files()`, `import_drive_file()`, `resources()`, `bucket_names()`, `describe_series()`, `query_series()` |
 
 ## [backend/app/services/context.py](../backend/app/services/context.py)
 
@@ -758,11 +781,15 @@ Machine-readable request/response schemas are available at `/api/openapi.json` o
 | GET | `/api/connections` | [connections()](../backend/app/api_connections.py) |
 | POST | `/api/connections` | [create_connection()](../backend/app/api_connections.py) |
 | GET | `/api/connections/capabilities` | [capabilities()](../backend/app/api_connections.py) |
+| GET | `/api/connections/google/callback` | [google_callback()](../backend/app/api_connections.py) |
+| POST | `/api/connections/google/start` | [google_start()](../backend/app/api_connections.py) |
 | GET | `/api/connections/microsoft/callback` | [microsoft_callback()](../backend/app/api_connections.py) |
 | POST | `/api/connections/microsoft/start` | [microsoft_start()](../backend/app/api_connections.py) |
 | GET | `/api/connections/{connection_id}/meeting-artifacts` | [discover_provider_artifacts()](../backend/app/api_meetings.py) |
 | DELETE | `/api/connections/{rid}` | [disconnect()](../backend/app/api_connections.py) |
 | PATCH | `/api/connections/{rid}` | [update_connection()](../backend/app/api_connections.py) |
+| GET | `/api/connections/{rid}/drive/files` | [drive_files()](../backend/app/api_connections.py) |
+| POST | `/api/connections/{rid}/drive/import` | [drive_import()](../backend/app/api_connections.py) |
 | GET | `/api/connections/{rid}/resources` | [resources()](../backend/app/api_connections.py) |
 | POST | `/api/connections/{rid}/series` | [series()](../backend/app/api_connections.py) |
 | POST | `/api/connections/{rid}/sync` | [sync()](../backend/app/api_connections.py) |

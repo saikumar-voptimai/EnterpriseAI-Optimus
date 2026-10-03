@@ -3,18 +3,36 @@
 import base64
 import hashlib
 import secrets
-from datetime import timedelta
+from datetime import datetime, timedelta
+from urllib.parse import urlsplit
 from sqlalchemy import delete, select
 from app.config import get_settings
 from app.models import User, utcnow
 from app.models_connections import Connection, OAuthAttempt, CalendarEvent
 from app.connectors.base import CredentialVault, ConnectorHTTP, validate_url
+from app.connectors.google import GoogleAdapter
 from app.connectors.microsoft import MicrosoftAdapter
 from app.connectors.influxdb import InfluxAdapter
 from app.connectors.zoom import ZoomAdapter
 from app.repositories.connections import ConnectionRepository
 from app.repositories.access import AccessRepository
 from app.services.errors import ServiceError
+
+
+def slack_webhook(url):
+    """Slack incoming webhooks only: https://hooks.slack.com/services/..."""
+    checked = validate_url(url, allowed_hosts=("hooks.slack.com",))
+    if not urlsplit(checked).path.startswith("/services/"):
+        raise ServiceError("Use a Slack incoming webhook URL.", 422)
+    return checked
+
+
+def pkce_pair():
+    state, verifier = secrets.token_urlsafe(48), secrets.token_urlsafe(64)
+    challenge = (
+        base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    )
+    return state, verifier, challenge
 
 
 class ConnectionService:
@@ -51,14 +69,19 @@ class ConnectionService:
         }
 
     def list(self, user, workspace_id=None):
-        return [self.public(c) for c in self.repo.list(user, workspace_id)]
+        rows = [self.public(c) for c in self.repo.list(user, workspace_id)]
+        if not user.is_admin:
+            # Endpoint addresses are an administrator concern, not a member's.
+            for row in rows:
+                row["config"] = {k: v for k, v in row["config"].items() if k not in {"url", "org_id"}}
+        return rows
 
     def create(self, user, *, provider, name, config, credentials, workspace_id=None):
         AccessRepository(self.db).require_active(user)
         if workspace_id:
             AccessRepository(self.db).workspace(user, workspace_id, roles={"manager"})
-        if provider not in {"influxdb", "zoom", "teams_workflow"}:
-            raise ServiceError("Use the Microsoft authorization flow for Outlook.", 422)
+        if provider not in {"influxdb", "zoom", "teams_workflow", "slack_webhook"}:
+            raise ServiceError("Use the sign-in flow for calendar and file accounts.", 422)
         if provider == "influxdb":
             # Industrial endpoints are a privileged trust decision, independent of workspace roles.
             if not user.is_admin:
@@ -68,7 +91,7 @@ class ConnectionService:
             if not workspace_id:
                 raise ServiceError("Industrial connections belong to a workspace.", 422)
             if set(config) - {"url", "org_id", "bucket_ids", "allow_private_network"}:
-                raise ServiceError("Unknown InfluxDB configuration field.", 422)
+                raise ServiceError("Unknown data source configuration field.", 422)
             validate_url(
                 config.get("url", ""),
                 allow_private=bool(config.get("allow_private_network")),
@@ -79,7 +102,9 @@ class ConnectionService:
                 or not isinstance(config.get("bucket_ids", []), list)
                 or len(config.get("bucket_ids", [])) > 100
             ):
-                raise ServiceError("Supply an InfluxDB read-only token and bucket ID list.", 422)
+                raise ServiceError(
+                    "Supply a read-only access token and the allowed data sets.", 422
+                )
             config = {**config, "bucket_ids": config.get("bucket_ids", [])}
             credentials = {"token": credentials["token"]}
         elif provider == "zoom":
@@ -90,6 +115,10 @@ class ConnectionService:
                     "An administrator must configure account-wide Zoom credentials.", 403
                 )
             credentials = {k: credentials[k] for k in ("account_id", "client_id", "client_secret")}
+            config = {}
+        elif provider == "slack_webhook":
+            slack_webhook(credentials.get("webhook_url", ""))
+            credentials = {"webhook_url": credentials["webhook_url"]}
             config = {}
         else:
             validate_url(
@@ -124,7 +153,7 @@ class ConnectionService:
                 if not user.is_admin:
                     raise ServiceError("An administrator must configure industrial endpoints.", 403)
                 if set(config) - {"url", "org_id", "bucket_ids", "allow_private_network"}:
-                    raise ServiceError("Unknown InfluxDB configuration field.", 422)
+                    raise ServiceError("Unknown data source configuration field.", 422)
                 merged = {**obj.config, **config}
                 validate_url(
                     merged.get("url", ""),
@@ -137,7 +166,7 @@ class ConnectionService:
                 ):
                     raise ServiceError("Invalid bucket selection.", 422)
                 obj.config = merged
-            elif obj.provider == "microsoft":
+            elif obj.provider in {"microsoft", "google"}:
                 if (
                     set(config) - {"calendar_ids"}
                     or not isinstance(config.get("calendar_ids"), list)
@@ -269,6 +298,120 @@ class ConnectionService:
             connection.encrypted_credentials = self.vault.encrypt(creds)
         return creds["access_token"]
 
+    def start_google(self, user):
+        state, verifier, challenge = pkce_pair()
+        url = GoogleAdapter(self.settings, self.http).authorize_url(state, challenge)
+        obj = Connection(
+            owner_id=user.id,
+            provider="google",
+            name="Google Workspace",
+            config={"calendar_ids": []},
+            status="pending",
+        )
+        self.db.add(obj)
+        self.db.flush()
+        self.db.add(
+            OAuthAttempt(
+                connection_id=obj.id,
+                state_hash=hashlib.sha256(state.encode()).hexdigest(),
+                encrypted_verifier=self.vault.encrypt({"verifier": verifier}),
+                expires_at=utcnow() + timedelta(minutes=10),
+            )
+        )
+        self.db.flush()
+        return {"authorization_url": url, "connection_id": obj.id}
+
+    async def finish_google(self, *, state, code=None, error=None):
+        attempt = self.db.scalar(
+            select(OAuthAttempt)
+            .where(OAuthAttempt.state_hash == hashlib.sha256(state.encode()).hexdigest())
+            .with_for_update()
+        )
+        if not attempt or attempt.used_at or attempt.expires_at < utcnow():
+            raise ServiceError(
+                "Authorization expired or was already used. Start connection again.", 400
+            )
+        connection = self.db.get(Connection, attempt.connection_id)
+        user = self.db.get(User, connection.owner_id)
+        if connection.provider != "google" or not user or not user.active:
+            raise ServiceError("This authorization is no longer valid.", 403)
+        attempt.used_at = utcnow()
+        # One-use state is durably consumed even when the provider exchange fails.
+        self.db.commit()
+        if error or not code:
+            connection.status = "error"
+            connection.last_error = "Google authorization was not completed."
+            self.db.commit()
+            return connection
+        try:
+            adapter = GoogleAdapter(self.settings, self.http)
+            creds = await adapter.token(
+                code=code, verifier=self.vault.decrypt(attempt.encrypted_verifier)["verifier"]
+            )
+            calendars = await adapter.calendars(creds["access_token"])
+            creds["expires_at"] = (
+                utcnow() + timedelta(seconds=int(creds.get("expires_in", 3600)))
+            ).isoformat()
+            connection.encrypted_credentials = self.vault.encrypt(creds)
+            primary = [c["id"] for c in calendars if c["primary"]]
+            connection.config = {
+                **connection.config,
+                "account": await adapter.account(creds["access_token"]),
+                "calendar_ids": primary or [c["id"] for c in calendars[:1]],
+            }
+            connection.status = "connected"
+            connection.last_error = None
+            connection.next_sync_at = utcnow()
+        except ServiceError as exc:
+            connection.status = "error"
+            connection.last_error = exc.detail[:500]
+        self.db.commit()
+        return connection
+
+    async def google_token(self, connection):
+        creds = self.credentials(connection)
+        expiry = datetime.fromisoformat(creds.get("expires_at", "1970-01-01T00:00:00+00:00"))
+        if expiry <= utcnow() + timedelta(minutes=2):
+            if not creds.get("refresh_token"):
+                raise ServiceError("Google authorization expired. Reconnect Google.", 409)
+            refreshed = await GoogleAdapter(self.settings, self.http).token(
+                refresh_token=creds["refresh_token"]
+            )
+            # Google omits the refresh token on refresh; keep the stored one.
+            creds.update({k: v for k, v in refreshed.items() if v})
+            creds["expires_at"] = (
+                utcnow() + timedelta(seconds=int(refreshed.get("expires_in", 3600)))
+            ).isoformat()
+            connection.encrypted_credentials = self.vault.encrypt(creds)
+        return creds["access_token"]
+
+    def _google(self, user, connection_id):
+        obj = self.repo.get(user, connection_id, manage=True, lock=True)
+        if obj.provider != "google":
+            raise ServiceError("Choose a Google connection.", 422)
+        return obj
+
+    async def drive_files(self, user, connection_id, search=""):
+        obj = self._google(user, connection_id)
+        return await GoogleAdapter(self.settings, self.http).drive_files(
+            await self.google_token(obj), search[:200]
+        )
+
+    async def import_drive_file(
+        self, user, connection_id, file_id, workspace_id=None, project_id=None
+    ):
+        from app.services.ingestion import IngestionService
+
+        obj = self._google(user, connection_id)
+        if not file_id or len(file_id) > 200:
+            raise ServiceError("Choose a file to import.", 422)
+        filename, content = await GoogleAdapter(self.settings, self.http).drive_download(
+            await self.google_token(obj), file_id, self.settings.max_upload_bytes
+        )
+        return IngestionService(self.db, self.settings).ingest(
+            user, content, filename, workspace_id=workspace_id, project_id=project_id
+        )
+
     async def resources(self, user, rid):
         obj = self.repo.get(user, rid, manage=True, lock=True)
         if obj.provider == "microsoft":
@@ -277,12 +420,25 @@ class ConnectionService:
                     await self.microsoft_token(obj)
                 )
             }
+        elif obj.provider == "google":
+            result = {
+                "calendars": await GoogleAdapter(self.settings, self.http).calendars(
+                    await self.google_token(obj)
+                )
+            }
+        elif obj.provider == "slack_webhook":
+            slack_webhook(self.credentials(obj)["webhook_url"])
+            result = {"capabilities": ["slack_delivery"], "detail": "Ready for notifications."}
         elif obj.provider == "influxdb":
             result = await InfluxAdapter(obj.config, self.credentials(obj), self.http).resources()
             organizations = result["organizations"]
             if user.is_admin and not obj.config.get("org_id") and len(organizations) == 1:
                 # A single reachable organization needs no choice.
                 obj.config = {**obj.config, "org_id": organizations[0]["id"]}
+            # Remember data set names so forms and the assistant can show names, not IDs.
+            names = {b["id"]: b["name"][:200] for b in result["buckets"][:100]}
+            if names != obj.config.get("bucket_names"):
+                obj.config = {**obj.config, "bucket_names": names}
         elif obj.provider == "zoom":
             await ZoomAdapter(self.credentials(obj), self.http).token()
             result = {
@@ -298,7 +454,7 @@ class ConnectionService:
                 "capabilities": ["teams_delivery"],
                 "detail": "Endpoint validated. A test delivery verifies the Workflow.",
             }
-        if obj.provider != "teams_workflow":
+        if obj.provider not in {"teams_workflow", "slack_webhook"}:
             obj.status = "connected"
         obj.last_error = None
         self.db.flush()
@@ -307,7 +463,7 @@ class ConnectionService:
     def _influx(self, user, connection_id):
         obj = self.repo.get(user, connection_id)
         if obj.provider != "influxdb":
-            raise ServiceError("Choose an InfluxDB connection.", 422)
+            raise ServiceError("Choose a process data connection.", 422)
         return InfluxAdapter(obj.config, self.credentials(obj), self.http)
 
     async def bucket_names(self, user, connection_id):
@@ -337,7 +493,7 @@ class ConnectionService:
     ):
         obj = self.repo.get(user, connection_id)
         if obj.provider != "influxdb":
-            raise ServiceError("Choose an InfluxDB connection.", 422)
+            raise ServiceError("Choose a process data connection.", 422)
         return await InfluxAdapter(obj.config, self.credentials(obj), self.http).query_series(
             bucket_id=bucket_id,
             measurement=measurement,

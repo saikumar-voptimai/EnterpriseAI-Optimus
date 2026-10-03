@@ -55,7 +55,7 @@ class InfluxAdapter:
         if bucket_id not in self.config.get("bucket_ids", []):
             raise ServiceError("This bucket is not enabled for this connection.", 403)
         if not self.config.get("org_id"):
-            raise ServiceError("Choose an InfluxDB organization first.", 422)
+            raise ServiceError("Choose the data source organization first.", 422)
 
     async def bucket_names(self):
         """Names of the enabled buckets, keyed by ID."""
@@ -202,7 +202,7 @@ class InfluxAdapter:
             line for line in io.StringIO(raw.decode("utf-8")) if not line.startswith("#")
         )
         if reader.fieldnames and not {"_time", "_value"} <= set(reader.fieldnames):
-            raise ProviderError("InfluxDB returned an invalid series table.")
+            raise ProviderError("The data source returned an invalid series table.")
         result = []
         timestamps = set()
         for item in reader:
@@ -215,7 +215,7 @@ class InfluxAdapter:
                     raise ValueError()
             except (ValueError, KeyError) as exc:
                 raise ProviderError(
-                    "InfluxDB returned a nonnumeric or invalid series value."
+                    "The data source returned a nonnumeric or invalid value."
                 ) from exc
             if timestamp.isoformat() in timestamps:
                 raise ProviderError(

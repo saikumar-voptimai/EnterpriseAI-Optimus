@@ -5,7 +5,8 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MODEL_TIERS = (("fast", "Fast"), ("standard", "Standard"), ("deep", "Deep"))
+# Users choose a level, never a model: provider model IDs stay server-side.
+MODEL_TIERS = (("fast", "Fast"), ("medium", "Medium Reasoning"), ("high", "High"))
 
 
 class Settings(BaseSettings):
@@ -19,12 +20,12 @@ class Settings(BaseSettings):
     openrouter_api_key: str = ""
     openrouter_models: str = "openai/gpt-4.1-mini"
     openrouter_default_model: str = "openai/gpt-4.1-mini"
-    # Optional three-level model ladder. When any tier is set, the tiers form the
-    # allowlist (plus explicit OPENROUTER_MODELS), Standard is the default and Fast
-    # handles classification/drafting unless those settings are given explicitly.
+    # Three model levels. When any is set, they form the allowlist (plus explicit
+    # OPENROUTER_MODELS), Medium is the default and Fast handles classification and
+    # drafting unless those settings are given explicitly.
     openrouter_model_fast: str = ""
-    openrouter_model_standard: str = ""
-    openrouter_model_deep: str = ""
+    openrouter_model_medium: str = ""
+    openrouter_model_high: str = ""
     allow_external_ai: bool = False
     session_cookie_secure: bool = True
     session_ttl_hours: int = Field(default=12, ge=1, le=168)
@@ -58,6 +59,8 @@ class Settings(BaseSettings):
     qdrant_url: str = "http://127.0.0.1:6333"
     qdrant_api_key: str = ""
     qdrant_collection: str = Field(default="optimus_knowledge", pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    google_client_id: str = ""
+    google_client_secret: str = ""
     microsoft_client_id: str = ""
     microsoft_client_secret: str = ""
     microsoft_tenant_id: str = "organizations"
@@ -71,6 +74,8 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = ""
     smtp_starttls: bool = True
+    # Implicit TLS (typically port 465). Port 465 implies it.
+    smtp_ssl: bool = False
     frontend_dist: str = str(Path(__file__).resolve().parents[2] / "frontend" / "dist")
 
     @field_validator("database_url")
@@ -108,7 +113,7 @@ class Settings(BaseSettings):
         models = dict.fromkeys(m.strip() for m in [*configured, *extra] if m.strip())
         self.openrouter_models = ",".join(models)
         if "openrouter_default_model" not in explicit or not self.openrouter_default_model:
-            self.openrouter_default_model = tiers["standard"] or configured[0]
+            self.openrouter_default_model = tiers["medium"] or configured[0]
         if not self.openrouter_system1_model:
             self.openrouter_system1_model = tiers["fast"] or self.openrouter_default_model
         return self
@@ -118,7 +123,7 @@ class Settings(BaseSettings):
         """libpq startup options: UTC sessions, and the application schema first."""
         options = "-c timezone=UTC"
         if self.database_schema != "public":
-            # extensions: Supabase's pgvector schema; public: pgvector elsewhere.
+            # pgvector lives in `extensions` on some hosts and in public elsewhere.
             options += f" -c search_path={self.database_schema},extensions,public"
         return options
 
@@ -129,14 +134,35 @@ class Settings(BaseSettings):
         )
 
     @property
+    def tier_models(self) -> dict[str, str]:
+        """Level -> provider model ID. Without configured levels the default is Medium."""
+        tiers = {
+            tier: getattr(self, f"openrouter_model_{tier}").strip()
+            for tier, _ in MODEL_TIERS
+            if getattr(self, f"openrouter_model_{tier}").strip()
+        }
+        return tiers or {"medium": self.openrouter_default_model}
+
+    @property
     def model_choices(self):
-        """Allowlisted models with tier labels for selection menus."""
-        labels = {}
-        for tier, label in reversed(MODEL_TIERS):
-            model = getattr(self, f"openrouter_model_{tier}").strip()
-            if model:
-                labels[model] = f"{label} · {model}"
-        return [{"id": model, "label": labels.get(model, model)} for model in self.allowed_models]
+        """Selectable levels for menus; ids are level keys, never model names."""
+        tiers = self.tier_models
+        return [{"id": tier, "label": label} for tier, label in MODEL_TIERS if tier in tiers]
+
+    def resolve_model(self, choice: str | None) -> str | None:
+        """A level key (or an internal model ID) -> provider model ID."""
+        return self.tier_models.get(choice, choice) if choice else choice
+
+    def public_model(self, model: str | None) -> str | None:
+        """The level key shown for a stored model ID; unknown models are not disclosed."""
+        if not model or model == "deterministic":
+            return model
+        if model in self.tier_models:
+            return model
+        for tier, model_id in self.tier_models.items():
+            if model_id == model:
+                return tier
+        return None
 
 
 @lru_cache

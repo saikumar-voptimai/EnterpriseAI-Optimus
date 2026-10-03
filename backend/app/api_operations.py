@@ -7,6 +7,7 @@ from sqlalchemy import delete, inspect as sa_inspect, select
 from sqlalchemy.dialects.postgresql import insert
 
 from . import models as m, schemas as s
+from .config import get_settings
 from .auth import Actor, admin_actor, current_actor, hash_password, utcnow
 from .repositories import AccessRepository, AuthorizationError, NotFound, WorkspaceRepository
 from .services.jobs import JobService
@@ -16,11 +17,15 @@ router = APIRouter()
 
 def row(obj, exclude=()):
     hidden = {"password_hash", "token_hash", "csrf_token", "lease_token"} | set(exclude)
-    return {
+    data = {
         col.key: getattr(obj, col.key)
         for col in sa_inspect(obj).mapper.column_attrs
         if col.key not in hidden
     }
+    if "model" in data:
+        # Clients see the model level only, never the provider model name.
+        data["model"] = get_settings().public_model(data["model"])
+    return data
 
 
 def public_user(user):

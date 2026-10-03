@@ -111,15 +111,15 @@ class ToolRegistry:
             CalendarArgs,
         ),
         "list_data_connections": (
-            "List authorized read-only InfluxDB connections with their enabled buckets (ID and name).",
+            "List the authorized read-only process data connections and their enabled data sets (bucket ID and name).",
             ConnectionsArgs,
         ),
         "describe_timeseries": (
-            "Discover what an enabled InfluxDB bucket contains: without a measurement, its measurement names; with one, its field names, tag keys and latest reading time. Use it to find exact names and a window that has data before read_timeseries; never guess names.",
+            "Discover what an enabled process data set (bucket) contains: without a measurement, its measurement names; with one, its field names, tag keys and latest reading time. Use it to find exact names and a window that has data before read_timeseries; never guess names.",
             DescribeArgs,
         ),
         "read_timeseries": (
-            "Read a bounded measured series (at most 32 days) from an enabled InfluxDB bucket. Supply exact measurement, field and tags from describe_timeseries; never invent data.",
+            "Read a bounded measured series (at most 32 days) from an enabled process data set (bucket). Supply exact measurement, field and tags from describe_timeseries; never invent data.",
             SeriesArgs,
         ),
         "calculate_statistics": (
@@ -260,10 +260,12 @@ class ToolRegistry:
                     ]
                     listed = []
                     for c in connections:
-                        try:
-                            names = await service.bucket_names(user, c.id)
-                        except (ProviderError, ServiceError):
-                            names = {}
+                        names = c.config.get("bucket_names") or {}
+                        if not all(b in names for b in c.config.get("bucket_ids", [])):
+                            try:
+                                names = await service.bucket_names(user, c.id)
+                            except (ProviderError, ServiceError):
+                                pass
                         listed.append(
                             {
                                 "id": c.id,

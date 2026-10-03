@@ -27,7 +27,7 @@ class Strict(BaseModel):
 
 
 class ConnectionCreate(Strict):
-    provider: Literal["influxdb", "zoom", "teams_workflow"]
+    provider: Literal["influxdb", "zoom", "teams_workflow", "slack_webhook"]
     name: str = Field(min_length=1, max_length=200)
     workspace_id: Id | None = None
     config: dict[str, Any] = Field(default_factory=dict)
@@ -43,6 +43,12 @@ class MicrosoftStart(Strict):
     include_transcripts: bool = False
 
 
+class DriveImport(Strict):
+    file_id: str = Field(min_length=1, max_length=200)
+    workspace_id: Id | None = None
+    project_id: Id | None = None
+
+
 class SeriesQuery(Strict):
     bucket_id: str = Field(min_length=1, max_length=200)
     measurement: str = Field(min_length=1, max_length=200)
@@ -56,7 +62,7 @@ class SeriesQuery(Strict):
 
 
 class DeliveryCreate(Strict):
-    channel: Literal["email", "teams"]
+    channel: Literal["email", "teams", "slack"]
     recipient: str = Field(default="", max_length=320)
     connection_id: Id | None = None
     subject: str = Field(min_length=1, max_length=300)
@@ -98,13 +104,18 @@ def capabilities(actor: Actor = Depends(current_actor)):
             "callback_url": settings.app_origin + "/api/connections/microsoft/callback",
             "requires": "Entra application registration and delegated consent; transcript permission may need administrator consent.",
         },
-        "speech": {
-            "configured": bool(settings.speech_api_key and settings.allow_external_ai),
-            "model": settings.speech_model,
+        "google": {
+            "configured": bool(
+                settings.google_client_id
+                and settings.google_client_secret
+                and settings.credential_encryption_key
+            ),
+            "callback_url": settings.app_origin + "/api/connections/google/callback",
         },
+        "speech": {"configured": bool(settings.speech_api_key and settings.allow_external_ai)},
         "email": {"configured": bool(settings.smtp_host and settings.smtp_from)},
         "encrypted_connections": bool(settings.credential_encryption_key),
-        "providers": ["microsoft", "zoom", "influxdb", "teams_workflow"],
+        "providers": ["google", "microsoft", "zoom", "influxdb", "teams_workflow", "slack_webhook"],
     }
 
 
@@ -164,6 +175,48 @@ async def microsoft_callback(
     )
 
 
+@router.post("/api/connections/google/start")
+def google_start(actor: Actor = Depends(current_actor)):
+    result = ConnectionService(actor.db).start_google(actor.user)
+    actor.db.commit()
+    return result
+
+
+@router.get("/api/connections/google/callback")
+async def google_callback(
+    state: str,
+    code: str | None = None,
+    error: str | None = None,
+    db: Session = Depends(get_session),
+):
+    # Same one-use hashed state contract as the Microsoft callback.
+    if len(state) > 500 or code and len(code) > 10000:
+        raise ServiceError("Invalid authorization callback.", 400)
+    obj = await ConnectionService(db).finish_google(state=state, code=code, error=error)
+    return RedirectResponse(
+        get_settings().app_origin
+        + "/?connection="
+        + ("connected" if obj.status == "connected" else "error"),
+        status_code=303,
+    )
+
+
+@router.get("/api/connections/{rid}/drive/files")
+async def drive_files(rid: Id, q: str = "", actor: Actor = Depends(current_actor)):
+    service = ConnectionService(actor.db)
+    files = await service.drive_files(actor.user, rid, q)
+    actor.db.commit()  # Persist a refreshed access token.
+    return files
+
+
+@router.post("/api/connections/{rid}/drive/import", status_code=201)
+async def drive_import(rid: Id, data: DriveImport, actor: Actor = Depends(current_actor)):
+    service = ConnectionService(actor.db)
+    document = await service.import_drive_file(actor.user, rid, **data.model_dump())
+    actor.db.commit()
+    return {"id": document.id, "title": document.title}
+
+
 @router.get("/api/connections/{rid}/resources")
 async def resources(rid: Id, actor: Actor = Depends(current_actor)):
     service = ConnectionService(actor.db)
@@ -207,7 +260,7 @@ async def transcribe(
     if not settings.allow_external_ai or not external_ai_consent:
         raise ServiceError("Approve external transcription before uploading audio.", 403)
     if not settings.speech_api_key:
-        raise ServiceError("Configure SPEECH_API_KEY to enable transcription.", 503)
+        raise ServiceError("Voice transcription is not configured.", 503)
     filename = PurePath(file.filename or "recording.webm").name
     if PurePath(filename).suffix.lower() not in {
         ".flac",

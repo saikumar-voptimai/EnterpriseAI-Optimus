@@ -296,5 +296,5 @@ class JobDraftService:
             "requires_review": True,
             "requires_manager_approval": bool(workspace_id),
             "context": {"metadata": metadata, "sources": sources},
-            "model": result.model,
+            "model": self.settings.public_model(result.model),
         }

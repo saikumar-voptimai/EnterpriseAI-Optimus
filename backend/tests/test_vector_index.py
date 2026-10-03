@@ -22,8 +22,8 @@ from test_knowledge import EmbeddingGateway, seed
 
 TIERS = {
     "openrouter_model_fast": "vendor/fast",
-    "openrouter_model_standard": "vendor/standard",
-    "openrouter_model_deep": "vendor/deep",
+    "openrouter_model_medium": "vendor/medium",
+    "openrouter_model_high": "vendor/high",
 }
 
 
@@ -33,39 +33,52 @@ def no_model_env(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
-def test_model_tiers_form_allowlist_default_and_fast_path(no_model_env):
+def test_model_levels_form_allowlist_default_and_fast_path(no_model_env):
     settings = Settings(_env_file=None, **TIERS)
-    assert settings.allowed_models == ["vendor/fast", "vendor/standard", "vendor/deep"]
-    assert settings.openrouter_default_model == "vendor/standard"
+    assert settings.allowed_models == ["vendor/fast", "vendor/medium", "vendor/high"]
+    assert settings.openrouter_default_model == "vendor/medium"
     assert settings.openrouter_system1_model == "vendor/fast"
-    assert [choice["label"] for choice in settings.model_choices] == [
-        "Fast · vendor/fast",
-        "Standard · vendor/standard",
-        "Deep · vendor/deep",
+    assert settings.model_choices == [
+        {"id": "fast", "label": "Fast"},
+        {"id": "medium", "label": "Medium Reasoning"},
+        {"id": "high", "label": "High"},
     ]
 
 
-def test_explicit_model_settings_survive_tiers(no_model_env):
+def test_clients_see_levels_and_never_model_names(no_model_env):
+    from app.services.gateway import select_model
+
+    settings = Settings(_env_file=None, openrouter_models="vendor/extra", **TIERS)
+    assert select_model("high", settings) == "vendor/high"
+    assert select_model(None, settings) == "vendor/medium"
+    assert settings.public_model("vendor/fast") == "fast"
+    assert settings.public_model("vendor/extra") is None  # allowed, but never named
+    assert settings.public_model("deterministic") == "deterministic"
+    # Extra allowlisted models are usable internally but never offered in menus.
+    assert [c["id"] for c in settings.model_choices] == ["fast", "medium", "high"]
+
+
+def test_explicit_model_settings_survive_levels(no_model_env):
     settings = Settings(
         _env_file=None,
         openrouter_models="vendor/extra",
-        openrouter_default_model="vendor/deep",
+        openrouter_default_model="vendor/high",
         openrouter_system1_model="vendor/extra",
         **TIERS,
     )
     assert settings.allowed_models[-1] == "vendor/extra"
-    assert settings.openrouter_default_model == "vendor/deep"
+    assert settings.openrouter_default_model == "vendor/high"
     assert settings.openrouter_system1_model == "vendor/extra"
-    assert settings.model_choices[-1] == {"id": "vendor/extra", "label": "vendor/extra"}
 
 
-def test_without_tiers_model_settings_are_unchanged(no_model_env):
+def test_without_levels_the_default_model_is_medium(no_model_env):
     settings = Settings(
         _env_file=None, openrouter_models="a/one,a/two", openrouter_default_model="a/two"
     )
     assert settings.allowed_models == ["a/one", "a/two"]
-    assert settings.openrouter_default_model == "a/two"
     assert settings.openrouter_system1_model == ""
+    assert settings.model_choices == [{"id": "medium", "label": "Medium Reasoning"}]
+    assert settings.resolve_model("medium") == "a/two" and settings.public_model("a/one") is None
 
 
 def test_qdrant_requests_carry_audience_filter_profile_and_key():
