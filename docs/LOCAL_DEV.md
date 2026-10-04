@@ -82,6 +82,11 @@ Integrations (Google, Microsoft, Zoom, Slack, Teams, email) are set up as descri
 ./scripts/local/start.sh --env development    # uses DATABASE_URL_NEON_DEVELOPMENT for this run
 ```
 
+**Environments.** `APP_ENV` in `.env` (overridable with `--env`) selects the environment:
+`DATABASE_URL_NEON_<ENV>` becomes `DATABASE_URL`, and any other `KEY_<ENV>` line becomes
+`KEY` for that run (for example `GOOGLE_CLIENT_ID_DEMO`). The first output line lists what
+was applied.
+
 The script applies database migrations, starts the workers in the background and
 runs the web app. Open `http://localhost:8088`. On a new branch, enter the printed
 setup token once to create the administrator and enterprise, then follow the

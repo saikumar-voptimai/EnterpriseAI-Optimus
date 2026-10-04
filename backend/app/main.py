@@ -723,4 +723,5 @@ def frontend(path: str):
     index = frontend_dist / "index.html"
     if not index.is_file():
         raise HTTPException(503, "Build the frontend before starting the application")
-    return FileResponse(index)
+    # Always revalidate the shell so a new build is picked up; hashed assets can be cached.
+    return FileResponse(index, headers={"Cache-Control": "no-cache"})

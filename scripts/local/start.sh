@@ -5,7 +5,9 @@
 #
 #   ./scripts/local/start.sh [--env demo|development|...] [--no-worker] [--skip-migrations]
 #
-# --env NAME uses DATABASE_URL_NEON_<NAME> (or DATABASE_URL_<NAME>) from .env for this run.
+# --env NAME (default: APP_ENV in .env) selects an environment for this run:
+#   DATABASE_URL_NEON_<NAME> (or DATABASE_URL_<NAME>) becomes DATABASE_URL, and any
+#   other KEY_<NAME> line becomes KEY, e.g. GOOGLE_CLIENT_ID_DEMO -> GOOGLE_CLIENT_ID.
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -31,13 +33,29 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-if [ -n "$TARGET_ENV" ]; then
+EXPLICIT_ENV="$TARGET_ENV"
+TARGET_ENV="${TARGET_ENV:-$(env_value APP_ENV)}"
+if [ -n "$TARGET_ENV" ] && [ -f "$ENV_FILE" ]; then
   key="$(printf '%s' "$TARGET_ENV" | tr '[:lower:]-' '[:upper:]_')"
   url="$(env_value "DATABASE_URL_NEON_$key")"
   [ -n "$url" ] || url="$(env_value "DATABASE_URL_$key")"
-  [ -n "$url" ] || die "no DATABASE_URL_NEON_$key or DATABASE_URL_$key in .env"
-  export DATABASE_URL="$url"
-  echo "Database: $TARGET_ENV branch"
+  if [ -n "$url" ]; then
+    export DATABASE_URL="$url"
+  elif [ -n "$EXPLICIT_ENV" ]; then
+    die "no DATABASE_URL_NEON_$key or DATABASE_URL_$key in .env"
+  fi
+  applied=()
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%$'\r'}"
+    [[ "$line" =~ ^([A-Z][A-Z0-9_]*)_${key}=(.*)$ ]] || continue
+    base="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    [[ "$base" == DATABASE_URL || "$base" == DATABASE_URL_NEON ]] && continue
+    value="${value#\"}" value="${value%\"}" value="${value#'}" value="${value%'}"
+    export "$base=$value"
+    applied+=("$base")
+  done <"$ENV_FILE"
+  echo "Environment: $TARGET_ENV${applied[*]+ (${applied[*]})}"
 fi
 
 [ -x "$VENV_PY" ] || die "run ./scripts/local/setup.sh first."

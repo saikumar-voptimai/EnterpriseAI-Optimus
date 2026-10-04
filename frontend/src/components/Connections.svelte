@@ -130,14 +130,14 @@
   <div class="connection-catalog">
     {#if !workspaceId}
       <article class="card">
-        <span class="feature-icon"><CalendarDays size={25}/></span>
+        <span class="feature-icon"><CalendarDays size={17}/></span>
         <h2>Google Workspace</h2>
         <p>Calendar, Drive files and Google Meet transcripts.</p>
         <button class="button primary" onclick={() => signIn('google')} disabled={busy || !capabilities?.google?.configured}><ExternalLink size={15}/>Connect Google</button>
         {#if capabilities && !capabilities.google?.configured}<small class="help">An administrator needs to enable Google sign-in first.</small>{/if}
       </article>
       <article class="card">
-        <span class="feature-icon"><CalendarDays size={25}/></span>
+        <span class="feature-icon"><CalendarDays size={17}/></span>
         <h2>Microsoft 365</h2>
         <p>Outlook calendar and Teams meeting transcripts.</p>
         <label class="check-row"><input type="checkbox" bind:checked={includeTranscripts}/><span>Include meeting transcripts</span></label>
@@ -146,7 +146,7 @@
       </article>
     {:else}
       <article class="card">
-        <span class="feature-icon"><Database size={25}/></span>
+        <span class="feature-icon"><Database size={17}/></span>
         <h2>Process data</h2>
         <p>Read approved plant measurements in this workspace.</p>
         <button class="button" onclick={() => add('influxdb')} disabled={!isAdmin}><Plus size={15}/>Add data source</button>
@@ -154,19 +154,19 @@
       </article>
     {/if}
     <article class="card">
-      <span class="feature-icon"><Video size={25}/></span>
+      <span class="feature-icon"><Video size={17}/></span>
       <h2>Zoom</h2>
       <p>Bring recorded meeting transcripts into Meeting Rooms.</p>
       <button class="button" onclick={() => add('zoom')} disabled={!isAdmin}><Plus size={15}/>Configure Zoom</button>
     </article>
     <article class="card">
-      <span class="feature-icon"><MessageSquare size={25}/></span>
+      <span class="feature-icon"><MessageSquare size={17}/></span>
       <h2>Slack</h2>
       <p>Send approved updates and alerts to a Slack channel.</p>
       <button class="button" onclick={() => add('slack_webhook')}><Plus size={15}/>Add Slack channel</button>
     </article>
     <article class="card">
-      <span class="feature-icon"><Mail size={25}/></span>
+      <span class="feature-icon"><Mail size={17}/></span>
       <h2>Microsoft Teams</h2>
       <p>Send approved updates and alerts to a Teams channel.</p>
       <button class="button" onclick={() => add('teams_workflow')}><Plus size={15}/>Add Teams channel</button>
@@ -205,7 +205,7 @@
     {@const Icon = kind(connection).icon}
     <article class="card">
       <div class="row-card">
-        <span class="feature-icon"><Icon size={23}/></span>
+        <span class="feature-icon"><Icon size={19}/></span>
         <div class="grow">
           <h3>{connection.name}</h3>
           <p class="help">{[kind(connection).label, connection.config?.account, canSync(connection) ? `Last sync: ${fmt(connection.last_synced_at)}` : ''].filter(Boolean).join(' · ')}</p>
@@ -263,7 +263,7 @@
       {/if}
     </article>
   {:else}
-    <div class="empty card"><Cable size={28}/><h2>No connections yet.</h2><p>Add one above, or start with uploaded documents and meeting minutes.</p></div>
+    <div class="empty card compact-empty"><Cable size={24}/><h2>No connections yet.</h2><p>Add one above, or start with uploaded documents and meeting minutes.</p></div>
   {/each}
 </div>
 

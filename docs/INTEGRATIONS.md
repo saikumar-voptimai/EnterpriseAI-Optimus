@@ -39,6 +39,11 @@ After changing `.env`, restart the app (`Ctrl+C`, then `./scripts/local/start.sh
    GOOGLE_CLIENT_SECRET=...
    ```
 
+   For a separate Google app per environment, suffix the keys with the environment
+   name instead (`GOOGLE_CLIENT_ID_DEMO`, `GOOGLE_CLIENT_SECRET_DEMO`); with `APP_ENV=demo`
+   (or `--env demo`) the start script applies them as `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`.
+   The startup line `Environment: demo (GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET)` confirms it.
+
 6. Restart, open **Connections** in your personal space, choose **Connect Google**,
    then open **Settings** on the connection to choose calendars, and **Drive files** to import documents.
 
