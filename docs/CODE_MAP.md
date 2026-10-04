@@ -48,6 +48,13 @@ Generated from the Python source by `python3 scripts/generate_reference.py`. Use
 | `CalendarArgs` | Declarative model, schema or state definition |
 | `ConnectionsArgs` | Declarative model, schema or state definition |
 | `DescribeArgs` | Declarative model, schema or state definition |
+| `TableArgs` | Declarative model, schema or state definition |
+| `RowFilter` | Declarative model, schema or state definition |
+| `Aggregate` | Declarative model, schema or state definition |
+| `QueryArgs` | Declarative model, schema or state definition |
+| `FolderArgs` | Declarative model, schema or state definition |
+| `SpreadsheetArgs` | Declarative model, schema or state definition |
+| `inline_refs()` | Module function |
 | `SeriesArgs` | Declarative model, schema or state definition |
 | `ToolResult` | Declarative model, schema or state definition |
 | `ToolRegistry` | `__init__()`, `schemas()`, `invoke()` |
@@ -163,6 +170,8 @@ Generated from the Python source by `python3 scripts/generate_reference.py`. Use
 | `create()` | Module function |
 | `meeting()` | Module function |
 | `import_artifact()` | Module function |
+| `obj_manage()` | Module function |
+| `require_zoom_host()` | Module function |
 | `discover_provider_artifacts()` | Module function |
 | `provider_artifact()` | Module function |
 | `draft()` | Module function |
@@ -277,7 +286,18 @@ Generated from the Python source by `python3 scripts/generate_reference.py`. Use
 | --- | --- |
 | `CredentialVault` | `__init__()`, `encrypt()`, `decrypt()` |
 | `validate_url()` | Module function |
+| `validate_host()` | Module function |
 | `ConnectorHTTP` | `__init__()`, `request()`, `json()` |
+
+## [backend/app/connectors/gdrive_folder.py](../backend/app/connectors/gdrive_folder.py)
+
+| Object | Public methods / role |
+| --- | --- |
+| `folder_id_from()` | Module function |
+| `service_account()` | Module function |
+| `b64()` | Module function |
+| `cell()` | Module function |
+| `DriveFolder` | `__init__()`, `assertion()`, `token()`, `folder()`, `files()`, `read_table()` |
 
 ## [backend/app/connectors/google.py](../backend/app/connectors/google.py)
 
@@ -299,6 +319,13 @@ Generated from the Python source by `python3 scripts/generate_reference.py`. Use
 | --- | --- |
 | `MicrosoftAdapter` | `__init__()`, `redirect_uri()`, `authority()`, `authorize_url()`, `token()`, `get()`, `pages()`, `calendars()`, `events()`, `transcript()`, `transcripts()` |
 | `graph_datetime()` | Module function |
+
+## [backend/app/connectors/postgres_source.py](../backend/app/connectors/postgres_source.py)
+
+| Object | Public methods / role |
+| --- | --- |
+| `plain()` | Module function |
+| `PostgresSource` | `__init__()`, `resources()`, `describe()`, `query()` |
 
 ## [backend/app/connectors/zoom.py](../backend/app/connectors/zoom.py)
 
@@ -586,7 +613,7 @@ Generated from the Python source by `python3 scripts/generate_reference.py`. Use
 | --- | --- |
 | `slack_webhook()` | Module function |
 | `pkce_pair()` | Module function |
-| `ConnectionService` | `__init__()`, `vault()`, `credentials()`, `public()`, `list()`, `create()`, `update()`, `disconnect()`, `start_microsoft()`, `finish_microsoft()`, `microsoft_token()`, `start_google()`, `finish_google()`, `google_token()`, `drive_files()`, `import_drive_file()`, `resources()`, `bucket_names()`, `describe_series()`, `query_series()` |
+| `ConnectionService` | `__init__()`, `vault()`, `credentials()`, `public()`, `list()`, `create()`, `update()`, `disconnect()`, `start_microsoft()`, `finish_microsoft()`, `microsoft_token()`, `start_google()`, `finish_google()`, `google_token()`, `drive_files()`, `import_drive_file()`, `resources()`, `bucket_names()`, `describe_series()`, `describe_table()`, `query_table()`, `folder_files()`, `read_spreadsheet()`, `query_series()` |
 
 ## [backend/app/services/context.py](../backend/app/services/context.py)
 

@@ -53,18 +53,23 @@ def validate_url(
     ):
         raise ServiceError("The endpoint is outside the provider allowlist.", 422)
     if not allow_private:
-        try:
-            addresses = {
-                item[4][0]
-                for item in socket.getaddrinfo(host, parsed.port or 443, type=socket.SOCK_STREAM)
-            }
-        except (OSError, ValueError) as exc:
-            raise ServiceError("The connector hostname could not be resolved.", 422) from exc
-        if any(not ipaddress.ip_address(ip).is_global for ip in addresses):
-            raise ServiceError(
-                "Private endpoints require explicit administrator configuration.", 422
-            )
+        validate_host(host, parsed.port or 443)
     return url.rstrip("/")
+
+
+def validate_host(host: str, port: int, *, allow_private=False) -> str:
+    """Reject hosts resolving to private, loopback or link-local addresses unless allowed."""
+    if not host or len(host) > 253 or any(c in host for c in "/@?# "):
+        raise ServiceError("Enter a valid server name.", 422)
+    if allow_private:
+        return host
+    try:
+        addresses = {item[4][0] for item in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)}
+    except (OSError, ValueError) as exc:
+        raise ServiceError("The connector hostname could not be resolved.", 422) from exc
+    if any(not ipaddress.ip_address(ip).is_global for ip in addresses):
+        raise ServiceError("Private endpoints require explicit administrator configuration.", 422)
+    return host
 
 
 class ConnectorHTTP:

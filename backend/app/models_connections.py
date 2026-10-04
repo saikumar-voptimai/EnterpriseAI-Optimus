@@ -24,11 +24,23 @@ class Connection(Identified, Mutable, Base):
     __tablename__ = "connections"
     __table_args__ = (
         CheckConstraint(
-            "provider IN ('microsoft','zoom','influxdb','teams_workflow','google','slack_webhook')",
+            "provider IN ('microsoft','zoom','influxdb','teams_workflow','google','slack_webhook',"
+            "'postgres','gdrive_folder')",
             name="provider",
         ),
         CheckConstraint("status IN ('pending','connected','error','disconnected')", name="status"),
         Index("ix_connections_sync", "provider", "status", "next_sync_at"),
+        # One active personal sign-in per provider; repeated sign-ins reuse it.
+        Index(
+            "uq_connections_personal_sign_in",
+            "owner_id",
+            "provider",
+            unique=True,
+            postgresql_where=text(
+                "workspace_id IS NULL AND provider IN ('google', 'microsoft') "
+                "AND status <> 'disconnected'"
+            ),
+        ),
     )
     owner_id: Mapped[str] = mapped_column(
         Uuid(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), index=True

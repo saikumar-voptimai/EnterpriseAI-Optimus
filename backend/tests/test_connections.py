@@ -299,7 +299,8 @@ def test_free_slots_never_ignore_an_errored_calendar(db):
             Connection(
                 owner_id=user.id,
                 name="Secondary",
-                provider="microsoft",
+                # One active sign-in per provider: the second calendar is another provider.
+                provider="google",
                 status="error",
                 config={"calendar_ids": ["other"]},
                 last_synced_at=now - timedelta(minutes=30),

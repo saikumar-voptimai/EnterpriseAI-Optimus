@@ -27,7 +27,9 @@ class Strict(BaseModel):
 
 
 class ConnectionCreate(Strict):
-    provider: Literal["influxdb", "zoom", "teams_workflow", "slack_webhook"]
+    provider: Literal[
+        "influxdb", "zoom", "teams_workflow", "slack_webhook", "postgres", "gdrive_folder"
+    ]
     name: str = Field(min_length=1, max_length=200)
     workspace_id: Id | None = None
     config: dict[str, Any] = Field(default_factory=dict)
@@ -115,7 +117,16 @@ def capabilities(actor: Actor = Depends(current_actor)):
         "speech": {"configured": bool(settings.speech_api_key and settings.allow_external_ai)},
         "email": {"configured": bool(settings.smtp_host and settings.smtp_from)},
         "encrypted_connections": bool(settings.credential_encryption_key),
-        "providers": ["google", "microsoft", "zoom", "influxdb", "teams_workflow", "slack_webhook"],
+        "providers": [
+            "google",
+            "microsoft",
+            "zoom",
+            "influxdb",
+            "postgres",
+            "gdrive_folder",
+            "teams_workflow",
+            "slack_webhook",
+        ],
     }
 
 

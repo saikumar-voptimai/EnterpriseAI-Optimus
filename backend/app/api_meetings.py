@@ -85,12 +85,32 @@ def import_artifact(rid: Id, data: ArtifactCreate, actor: Actor = Depends(curren
     return service.payload(actor.user, service.repo.meeting(actor.user, rid))
 
 
+def obj_manage(actor, connection_id):
+    """Personal sign-ins need ownership; organization Zoom is usable by everyone."""
+    from app.models_connections import Connection
+    from app.repositories.connections import ORGANIZATION_PROVIDERS
+
+    connection = actor.db.get(Connection, connection_id)
+    return not (connection and connection.provider in ORGANIZATION_PROVIDERS)
+
+
+def require_zoom_host(user, recording):
+    """Company Zoom reaches every recording; people may import only meetings they hosted."""
+    host = str(recording.get("host_email") or "").strip().lower()
+    if not user.is_admin and host != user.email.strip().lower():
+        raise ServiceError(
+            "Only the meeting host or an administrator can import this recording.", 403
+        )
+
+
 @router.get("/api/connections/{connection_id}/meeting-artifacts")
 async def discover_provider_artifacts(
     connection_id: Id, meeting_id: str, actor: Actor = Depends(current_actor)
 ):
     service = ConnectionService(actor.db)
-    obj = service.repo.get(actor.user, connection_id, manage=True, lock=True)
+    obj = service.repo.get(
+        actor.user, connection_id, manage=obj_manage(actor, connection_id), lock=True
+    )
     if len(meeting_id) > 1024:
         raise ServiceError("Invalid meeting identifier.", 422)
     if obj.provider == "microsoft":
@@ -109,6 +129,7 @@ async def discover_provider_artifacts(
         )
     elif obj.provider == "zoom":
         result, _ = await ZoomAdapter(service.credentials(obj)).recordings(meeting_id)
+        require_zoom_host(actor.user, result)
         artifacts = [
             {"id": r["id"], "kind": "transcript", "created_at": r.get("recording_start")}
             for r in result.get("recording_files", [])
@@ -127,7 +148,9 @@ async def provider_artifact(
     meetings = MeetingService(actor.db)
     meetings.repo.meeting(actor.user, rid, manage=True)
     service = ConnectionService(actor.db)
-    obj = service.repo.get(actor.user, data.connection_id, manage=True, lock=True)
+    obj = service.repo.get(
+        actor.user, data.connection_id, manage=obj_manage(actor, data.connection_id), lock=True
+    )
     if obj.provider == "microsoft":
         if not obj.config.get("include_transcripts"):
             raise ServiceError("Reconnect Microsoft with transcript permissions enabled.", 403)
@@ -139,9 +162,9 @@ async def provider_artifact(
             await service.google_token(obj), data.artifact_id
         )
     elif obj.provider == "zoom":
-        text = await ZoomAdapter(service.credentials(obj)).transcript(
-            data.meeting_id, data.artifact_id
-        )
+        zoom = ZoomAdapter(service.credentials(obj))
+        require_zoom_host(actor.user, (await zoom.recordings(data.meeting_id))[0])
+        text = await zoom.transcript(data.meeting_id, data.artifact_id)
     else:
         raise ServiceError("Choose a Google, Microsoft or Zoom connection.", 422)
     meetings.import_artifact(

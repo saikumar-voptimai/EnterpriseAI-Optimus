@@ -5,6 +5,9 @@ from app.models import User
 from app.models_connections import Connection, MeetingRoom, MeetingAttendee
 from app.repositories.access import AccessRepository, NotFound, AuthorizationError
 
+# Configured once by an administrator, used by everyone (for example company Zoom).
+ORGANIZATION_PROVIDERS = ("zoom",)
+
 
 class ConnectionRepository:
     def __init__(self, db):
@@ -16,6 +19,9 @@ class ConnectionRepository:
             or_(
                 (Connection.owner_id == user.id) & (Connection.workspace_id.is_(None)),
                 Connection.workspace_id.in_(self.access.workspace_ids(user)),
+                # Organization-wide integrations are usable by every active person.
+                Connection.provider.in_(ORGANIZATION_PROVIDERS)
+                & (Connection.status != "disconnected"),
             )
         )
         if workspace_id is not None:
@@ -33,6 +39,9 @@ class ConnectionRepository:
             raise NotFound("Connection not found")
         if obj.workspace_id:
             self.access.workspace(user, obj.workspace_id, roles={"manager"} if manage else None)
+        elif obj.provider in ORGANIZATION_PROVIDERS:
+            if manage and not user.is_admin:
+                raise NotFound("Connection not found")
         elif obj.owner_id != user.id:
             raise NotFound("Connection not found")
         return obj

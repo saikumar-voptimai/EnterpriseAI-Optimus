@@ -64,6 +64,64 @@ class DescribeArgs(Arguments):
     lookback_days: int = Field(default=365, ge=1, le=3650)
 
 
+class TableArgs(Arguments):
+    connection_id: str = Field(min_length=1, max_length=100)
+    table: str = Field(
+        min_length=3, max_length=300, description="schema.table from list_data_connections"
+    )
+
+
+class RowFilter(Arguments):
+    column: str = Field(min_length=1, max_length=200)
+    op: Literal["=", "!=", ">", ">=", "<", "<=", "contains"] = "="
+    value: str | float | int | bool | None = None
+
+
+class Aggregate(Arguments):
+    function: Literal["count", "sum", "avg", "min", "max"]
+    column: str | None = Field(default=None, max_length=200)
+
+
+class QueryArgs(TableArgs):
+    columns: list[str] = Field(default_factory=list, max_length=40)
+    filters: list[RowFilter] = Field(default_factory=list, max_length=10)
+    order_by: str | None = Field(default=None, max_length=200)
+    descending: bool = False
+    limit: int = Field(default=50, ge=1, le=200)
+    aggregate: Aggregate | None = None
+    group_by: list[str] = Field(default_factory=list, max_length=5)
+
+
+class FolderArgs(Arguments):
+    connection_id: str = Field(min_length=1, max_length=100)
+    search: str = Field(default="", max_length=200)
+
+
+class SpreadsheetArgs(Arguments):
+    connection_id: str = Field(min_length=1, max_length=100)
+    file_id: str = Field(min_length=1, max_length=200)
+    sheet: str | None = Field(default=None, max_length=200)
+    offset: int = Field(default=0, ge=0, le=100000)
+    limit: int = Field(default=100, ge=1, le=200)
+
+
+def inline_refs(schema):
+    """Tool schemas sent to models are self-contained: inline $defs references."""
+    definitions = schema.pop("$defs", {})
+
+    def resolve(node):
+        if isinstance(node, dict):
+            ref = node.get("$ref", "")
+            if ref.startswith("#/$defs/"):
+                return resolve(dict(definitions[ref.split("/")[-1]]))
+            return {key: resolve(value) for key, value in node.items()}
+        if isinstance(node, list):
+            return [resolve(item) for item in node]
+        return node
+
+    return resolve(schema)
+
+
 class SeriesArgs(Arguments):
     connection_id: str = Field(min_length=1, max_length=100)
     bucket_id: str = Field(min_length=1, max_length=200)
@@ -75,6 +133,17 @@ class SeriesArgs(Arguments):
     aggregate_minutes: int | None = Field(default=None, ge=1, le=1440)
     aggregation: Literal["mean", "sum", "last"] = "mean"
     tags: dict[str, str] = Field(default_factory=dict, max_length=10)
+
+
+DATA_TOOLS = {
+    "list_data_connections",
+    "describe_timeseries",
+    "read_timeseries",
+    "describe_table",
+    "query_table",
+    "list_folder_files",
+    "read_spreadsheet",
+}
 
 
 @dataclass(frozen=True)
@@ -111,8 +180,24 @@ class ToolRegistry:
             CalendarArgs,
         ),
         "list_data_connections": (
-            "List the authorized read-only process data connections and their enabled data sets (bucket ID and name).",
+            "List the read-only data sources of this workspace: process historians with their data sets (bucket ID and name), SQL databases with their shared tables, and shared spreadsheet folders.",
             ConnectionsArgs,
+        ),
+        "describe_table": (
+            "Show the columns, approximate row count and a five-row sample of a shared SQL table. Use before query_table.",
+            TableArgs,
+        ),
+        "query_table": (
+            "Read rows from a shared SQL table: choose columns, filters (=, !=, >, >=, <, <=, contains), ordering and a limit, or one aggregate (count, sum, avg, min, max) optionally grouped by columns. Read-only; use exact column names from describe_table.",
+            QueryArgs,
+        ),
+        "list_folder_files": (
+            "List files in a shared spreadsheet folder, newest first, optionally filtered by name.",
+            FolderArgs,
+        ),
+        "read_spreadsheet": (
+            "Read a spreadsheet (Google Sheets, Excel or CSV) from a shared folder as a table: sheet names, column headers and a window of rows. Page with offset using total_rows.",
+            SpreadsheetArgs,
         ),
         "describe_timeseries": (
             "Discover what an enabled process data set (bucket) contains: without a measurement, its measurement names; with one, its field names, tag keys and latest reading time. Use it to find exact names and a window that has data before read_timeseries; never guess names.",
@@ -150,7 +235,7 @@ class ToolRegistry:
                 "function": {
                     "name": name,
                     "description": description,
-                    "parameters": schema.model_json_schema(),
+                    "parameters": inline_refs(schema.model_json_schema()),
                 },
             }
             for name, (description, schema) in self.definitions.items()
@@ -240,7 +325,7 @@ class ToolRegistry:
                         }
                     )
                 return ToolResult(data, sources)
-            if name in {"list_data_connections", "describe_timeseries", "read_timeseries"}:
+            if name in DATA_TOOLS:
                 from app.services.connections import ConnectionService
 
                 service = ConnectionService(session, self.settings)
@@ -256,10 +341,32 @@ class ToolRegistry:
                     connections = [
                         c
                         for c in service.repo.list(user, self.workspace_id)
-                        if c.provider == "influxdb" and c.status == "connected" and permitted(c)
+                        if c.provider in {"influxdb", "postgres", "gdrive_folder"}
+                        and c.status == "connected"
+                        and permitted(c)
                     ]
                     listed = []
                     for c in connections:
+                        if c.provider == "postgres":
+                            listed.append(
+                                {
+                                    "id": c.id,
+                                    "name": c.name,
+                                    "kind": "sql_database",
+                                    "tables": c.config.get("tables", []),
+                                }
+                            )
+                            continue
+                        if c.provider == "gdrive_folder":
+                            listed.append(
+                                {
+                                    "id": c.id,
+                                    "name": c.name,
+                                    "kind": "spreadsheet_folder",
+                                    "folder": c.config.get("folder_name"),
+                                }
+                            )
+                            continue
                         names = c.config.get("bucket_names") or {}
                         if not all(b in names for b in c.config.get("bucket_ids", [])):
                             try:
@@ -270,6 +377,7 @@ class ToolRegistry:
                             {
                                 "id": c.id,
                                 "name": c.name,
+                                "kind": "process_historian",
                                 "buckets": [
                                     {"id": b, "name": names.get(b)}
                                     for b in c.config.get("bucket_ids", [])
@@ -300,6 +408,32 @@ class ToolRegistry:
                     "version": connection.updated_at.isoformat(),
                     "read_only": True,
                 }
+                if name == "describe_table":
+                    return ToolResult(
+                        await service.describe_table(user, params.connection_id, params.table),
+                        [reference],
+                    )
+                if name == "query_table":
+                    request = params.model_dump(exclude={"connection_id", "table"})
+                    return ToolResult(
+                        await service.query_table(
+                            user, params.connection_id, params.table, **request
+                        ),
+                        [reference],
+                    )
+                if name == "list_folder_files":
+                    files = await service.folder_files(user, params.connection_id, params.search)
+                    return ToolResult({"files": files}, [reference])
+                if name == "read_spreadsheet":
+                    table = await service.read_spreadsheet(
+                        user,
+                        params.connection_id,
+                        params.file_id,
+                        sheet=params.sheet,
+                        offset=params.offset,
+                        limit=params.limit,
+                    )
+                    return ToolResult(table, [reference])
                 if name == "describe_timeseries":
                     description = await service.describe_series(
                         user,
